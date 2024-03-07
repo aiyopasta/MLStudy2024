@@ -79,20 +79,33 @@ def A_many(vals):
 
 # THE ACTUAL CODE STARTS HERE —————————————————————————————————————————————————————————————————————————————————
 # Training data (raw, not normalized)
-x_train, y_train = [0., 100.], [0., 100.]
+x_train, y_train = [0., 100., 300., -50.], [0., 100., 200., -40]
 
 # Build computation graph (TensorNode, TensorNode(learnable)) --> Multiplication Node --> SquaredLossNode <-- TensorNode
 # Create the nodes (for homoskedastic linear regression, for now)
-X = TensorNode(learnable=False, shape=(len(x_train), 3), name='X_data')  # one extra feature for bias term
+X = TensorNode(learnable=False, shape=(len(x_train), 2), name='X_data')  # one extra feature for bias term
 y = TensorNode(learnable=False, shape=(len(y_train), 1), name='y_labels')
-W = TensorNode(learnable=True, shape=(3, 1), name='Weights')  # 2 weights + 1 bias
+W = TensorNode(learnable=True, shape=(2, 1), name='Weights')  # 1 weight + 1 bias
 XW = MultiplicationNode(X, W)
 Loss = SquaredLossNode(mu=XW, y=y)
 # List of all nodes, for convenience
 node_list = [X, y, W, XW, Loss]
 
-# TODO Testing:
 
+# TODO <delete> Testing:
+# Set the inputs of input nodes
+# (1) Preprocess (TODO: normalize, etc)
+x_input = np.reshape(x_train, (len(x_train), 1))
+x_input = np.hstack((x_input, np.ones((len(x_train), 1))))  # bias trick
+# (2) Actually set the inputs
+X.set_input(x_input)
+y.set_input(np.reshape(y_train, (len(y_train), 1)))
+# (3) Initialize weights and biases (TODO: finish)
+W.value[1,0] = 0.01
+# Training step
+Loss.fire()
+Loss.backfire()
+print(Loss.value)
 
 
 # Training parameters

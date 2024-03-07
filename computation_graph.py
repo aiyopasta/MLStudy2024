@@ -54,6 +54,7 @@ class TensorNode:
         self.name = name
 
     def set_input(self, tensor:np.ndarray):
+        ''' Use it to load in a new batch of training examples. '''
         if not self.learnable and True: print('Non-learnable tensor', self.name, 'was reset.')
         self.value = tensor
         self.gradient = np.zeros_like(tensor)
@@ -71,7 +72,8 @@ class TensorNode:
     def backfire(self, from_child):
         assert from_child in self.children, 'not a valid child of this node!'
         assert hasattr(from_child, 'gradients')  # we assume child has list of gradients, indexed by parents
-        self.gradient += from_child.gradients[self]  # reverse DFS hits dead-end here
+        if self.learnable:
+            self.gradient += from_child.gradients[self]  # reverse DFS hits dead-end here
 
     def set_value_from_flat(self, new_val, flat_idx):
         idx = np.unravel_index(flat_idx, self.shape)
@@ -80,6 +82,12 @@ class TensorNode:
     def get_values_from_flat(self, flat_idx):
         idx = np.unravel_index(flat_idx, self.shape)
         return self.value[idx], self.gradient[idx]
+
+    def __call__(self, *args, **kwargs):
+        return self.fire()
+
+    def __repr__(self):
+        return str(self.value)
 
 
 # A node representing multiplication between two tensors  TODO: Extend to arbitrary dimension
@@ -106,18 +114,22 @@ class MultiplicationNode:
         for parent in self.parents: parent.reset(hard)  # clean parents, recursively
 
     def fire(self):
-        if print_fired: print(self.name, 'was fired.')
         # If we haven't already computed this, compute it. Otherwise use cached.
         if not self.has_cached: self.value = self.left_tensor.fire() @ self.right_tensor.fire()
+        else: print('<used cached> ', end='')
         self.has_cached = True
+        if print_fired: print(self.name, 'was fired.')
         return self.value
 
     def backfire(self, from_child):
         assert from_child in self.children, 'not a valid child of this node!'
         assert hasattr(from_child, 'gradients')
-        self.gradients[self.left_tensor] += from_child.gradients[self] @ self.right_tensor.value.T
-        self.gradients[self.right_tensor] += self.left_tensor.value.T @ from_child.gradients[self]
+        self.gradients[self.left_tensor] += from_child.gradients[self] @ self.right_tensor().T
+        self.gradients[self.right_tensor] += self.left_tensor().T @ from_child.gradients[self]
         for parent in self.parents: parent.backfire(self)
+
+    def __call__(self, *args, **kwargs):
+        return self.fire()
 
 
 # A node representing addition between two tensors
@@ -143,10 +155,11 @@ class AdditionNode:
         for parent in self.parents: parent.reset(hard)  # clean parents, recursively
 
     def fire(self):
-        if print_fired: print(self.name, 'was fired.')
         # If we haven't already computed this, compute it. Otherwise use cached.
         if not self.has_cached: self.value = self.tensor1.fire() + self.tensor2.fire()
+        else: print('<used cached> ', end='')
         self.has_cached = True
+        if print_fired: print(self.name, 'was fired.')
         return self.value
 
     def backfire(self, from_child):
@@ -155,6 +168,9 @@ class AdditionNode:
         self.gradients[self.tensor1] += from_child.gradients[self]  # the gradient just distributes
         self.gradients[self.tensor2] += from_child.gradients[self]
         for parent in self.parents: parent.backfire(self)
+
+    def __call__(self, *args, **kwargs):
+        return self.fire()
 
 
 # A node representing the squared loss, given a mini-batch of activations, and corresponding labels.
@@ -186,26 +202,30 @@ class SquaredLossNode:
         for parent in self.parents: parent.reset(hard)  # clean parents, recursively
 
     def fire(self):
-        if print_fired: print(self.name, 'was fired.')
         # If we haven't already computed this, compute it. Otherwise use cached.
-        sigma = np.ones_like(self.mu) * (self.std if hasattr(self, 'std') else 1)
-        if not self.has_cached: self.value = 0.5 * (np.linalg.norm((self.y - self.mu) / sigma) ** 2) + sum(np.log(sigma))  # will reduce to MSE if sigma is just vector of ones
+        sigma = np.ones_like(self.mu.fire()) * (self.std.fire() if hasattr(self, 'std') else 1)
+        if not self.has_cached: self.value = 0.5 * (np.linalg.norm((self.y.fire() - self.mu.fire()) / sigma) ** 2) + sum(np.log(sigma))  # will reduce to MSE if sigma is just vector of ones
+        else: print('<used cached> ', end='')
         self.has_cached = True
+        if print_fired: print(self.name, 'was fired.')
         return self.value
 
     def backfire(self, from_child=None):
         assert from_child is None or from_child in self.children, 'not a valid child of this node!'
-        assert hasattr(from_child, 'gradients')
+        assert hasattr(from_child, 'gradients') or from_child is None
         child_gradient = from_child.gradient[self] if from_child is not None else 1.  # note that it will be a real number!
-        sigma = np.ones_like(self.mu) * (self.std if hasattr(self, 'std') else 1)
-        self.gradients[self.mu] += 0.5 * ((self.mu - self.y) / (sigma ** 2)) * child_gradient
-        if hasattr(self, 'std'): self.gradients[self.std] += ((- ((self.y - self.mu) ** 2) / (self.std ** 3)) + (1. / self.std)) * child_gradient
+        sigma = np.ones_like(self.mu()) * (self.std if hasattr(self, 'std') else 1)
+        self.gradients[self.mu] += 0.5 * ((self.mu() - self.y()) / (sigma ** 2)) * child_gradient
+        if hasattr(self, 'std'): self.gradients[self.std] += ((- ((self.y() - self.mu()) ** 2) / (self.std() ** 3)) + (1. / self.std())) * child_gradient
         for parent in self.parents: parent.backfire(self)
         # Dumb note about what highschool me was confused about LOL
         # (yi - ui)^2 = yi^2 - 2yiui + ui^2  --->  2ui - 2yi = 2(ui - yi)
         # (ui - yi)^2 = ui^2 - 2yiui + yi^2  --->  2ui - 2yi = 2(ui - yi)
         # chain rule on (1): -2(yi - ui) = 2(ui - yi)
         # chain rule on (2): 2(ui - yi)
+
+    def __call__(self, *args, **kwargs):
+        return self.fire()
 
 
 # Ridge, Lasso, and elastic
