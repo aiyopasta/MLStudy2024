@@ -11,6 +11,7 @@
 # (6) For i in linspace(-window_width, window_width, increments), normalize i, query regression algo, plot line(s).
 
 import moderngl
+import numpy as np
 import pygame
 from computation_graph import *
 
@@ -61,9 +62,58 @@ def surf2tex(surf):
     return tex
 
 
+# MY HELPER FUNCTIONS —————————————————————————————————————————————————————————————————————————————————
+# Coordinate Shift
+def A(val):
+    return np.array([val[0] + width / 2, -val[1] + height / 2])
+
+
+def A_inv(val):
+    global width, height
+    return np.array([val[0] - width / 2, -(val[1] - height / 2)])
+
+
+def A_many(vals):
+    return [A(v) for v in vals]   # Galaxy brain function
+
+
+# THE ACTUAL CODE STARTS HERE —————————————————————————————————————————————————————————————————————————————————
+x_train, y_train = [], []
+
+
+
+# Additional vars (for drawing and such)
+drag_idx = -1  # index of point being moved. -1 if none
+point_radius = 10
+colors = {
+    'white': np.array([255., 255., 255.]),
+    'black': np.array([0., 0., 0.]),
+    'red': np.array([255, 66, 48]),
+    'blue': np.array([30, 5, 252]),
+    'fullred': np.array([255, 0, 0]),
+    'fullblue': np.array([0, 0, 255]),
+    'START': np.array([255, 255, 255])
+}
+
+
 # Key handling # Example: keys_pressed[pygame.K_p]
 def handle_keys(keys_pressed):
     pass
+
+
+# Mouse handling
+def handle_mouse(event):
+    global x_train, y_train, point_radius, drag_idx
+    # Either add a new point or select existing one for dragging
+    if drag_idx == -1:
+        pos = A_inv(pygame.mouse.get_pos())
+        is_selecting = [np.linalg.norm(pos - np.array([x,y])) < point_radius for x,y in zip(x_train, y_train)]
+        if np.any(is_selecting): drag_idx = is_selecting.index(True)
+        else:
+            x_train.append(pos[0])
+            y_train.append(pos[1])
+    # Stop tracking the dragging point
+    else: drag_idx = -1
 
 
 def main():
@@ -76,12 +126,22 @@ def main():
         # Reset stuff
         screen.fill((0, 0, 0, 0))  # make background black + transparent
 
-        # Draw stuff on screen using Pygame commands
-        pygame.draw.rect(screen, (255, 0, 255, 128), (100, 100, 300, 300), width=10)
+        # UPDATE MODEL / DATA ————
+        # Move point being dragged to mouse location
+        if drag_idx != -1:
+            x_train[drag_idx], y_train[drag_idx] = tuple(A_inv(pygame.mouse.get_pos()))
 
-        # Handle keys
+
+        # DRAW USING PYGAME COMMANDS ————
+        # Draw training points
+        for x, y in zip(x_train, y_train):
+            pygame.draw.circle(screen, colors['white'], A([x,y]), radius=point_radius, width=0)
+
+
+        # Handle keys + mouse
         keys_pressed = pygame.key.get_pressed()
         handle_keys(keys_pressed)
+
 
         # Send the pygame surface over to our shaders for post-processing
         # (1) Send the surface as a uniform called 'tex'
@@ -98,11 +158,14 @@ def main():
         count += 1
         pygame.display.flip()  # this flips the buffers of the WINDOW, not screen, which is a standalone surface
         frame_tex.release()  # VERY IMPORTANT
-        # Check if needed to quit
+        # Check if needed to quit + handle mouse (ya it's weird but if we do pygame.event.get() separately above
+        # it does not work because each call clears all the events leaving none for the second one to process).
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 run = False
                 pygame.quit()
+            if event.type == pygame.MOUSEBUTTONUP:
+                handle_mouse(event)
 
 
 if __name__ == '__main__':
