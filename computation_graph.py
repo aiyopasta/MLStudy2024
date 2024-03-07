@@ -1,7 +1,7 @@
 # NOTE 1: Both forward & backwards passes are called recursively, starting with final loss node.
 #         Each backwards pass onto a parent must include from which child it was sent, for summing.
 #
-# NOTE 2: The optimization step, e.g. x += alpha * dx needs to be called for each node, non-recursively.
+# NOTE 2: The optimization step, e.g. x += alpha * dx for batch-GD, needs to be called for each node, non-recursively.
 #         Each node will hold its own per-node optimization quantities, e.g. "velocity" for momentum.
 #         It will not have its own alpha, mu, etc. Those need to be globally set outside, and passed in.
 #
@@ -37,9 +37,13 @@ import numpy as np
 np.set_printoptions(suppress=True)
 np.set_printoptions(linewidth=np.inf)
 
+# Debugging prints
+print_fired = True
+
+
 # A node representing a scalar, vector, matrix, or arbitrary dimension "tensor"
 class TensorNode:
-    def __init__(self, learnable, shape=(1,1)):
+    def __init__(self, learnable, shape=(1,1), name='no_name'):
         ''' shape is a tuple (d1, d2, ..., dn) describing dimensions of input '''
         self.shape = shape
         self.value = np.zeros(shape)
@@ -47,10 +51,21 @@ class TensorNode:
         self.gradient = np.zeros(shape)
         self.learnable = learnable
 
-    def reset(self):
-        self.value = np.zeros(self.shape)
+        self.name = name
+
+    def set_input(self, tensor:np.ndarray):
+        if not self.learnable and True: print('Non-learnable tensor', self.name, 'was reset.')
+        self.value = tensor
+        self.gradient = np.zeros_like(tensor)
+        self.shape = tensor.shape
+
+    def reset(self, hard=False):
+        ''' hard reset sets learnable parameters of the graph to 0s as well '''
+        if (not self.learnable) or hard: self.value = np.zeros(self.shape)
+        self.gradient = np.zeros(self.shape)
 
     def fire(self):
+        if print_fired: print(self.name, 'was fired.')
         return self.value
 
     def backfire(self, from_child):
@@ -68,25 +83,30 @@ class TensorNode:
 
 
 # A node representing multiplication between two tensors  TODO: Extend to arbitrary dimension
-class MultiplyNode:
-    def __init__(self, tensor1, tensor2):
+class MultiplicationNode:
+    def __init__(self, tensor1, tensor2, name='multiplication'):
         assert len(tensor1.value.shape) == len(tensor2.value.shape) == 2, 'multiplication has not been implemented for >2 tensors!'
         assert tensor1.value.shape[1] == tensor2.value.shape[0], 'input shapes don\'t match!'
         self.left_tensor, self.right_tensor = tensor1, tensor2  # called 'left' & 'right' as order matters
         self.children = []  # add children from outside
         self.parents = [tensor1, tensor2]
+        tensor1.children.append(self)
+        tensor2.children.append(self)
         self.shape = (tensor1.shape[0], tensor2.shape[1])  # shape of the output
 
         self.value, self.gradients, self.has_cached = None, None, None  # good practice to initialize in constructor
         self.reset()
 
-    def reset(self):
+        self.name = name
+
+    def reset(self, hard=False):
         self.has_cached = False  # this will allow self.value to be overwritten automatically
         self.gradients = {self.left_tensor: np.zeros(self.left_tensor.value.shape),
                           self.right_tensor: np.zeros(self.right_tensor.value.shape)}
-        for parent in self.parents: parent.reset()  # clean parents, recursively
+        for parent in self.parents: parent.reset(hard)  # clean parents, recursively
 
     def fire(self):
+        if print_fired: print(self.name, 'was fired.')
         # If we haven't already computed this, compute it. Otherwise use cached.
         if not self.has_cached: self.value = self.left_tensor.fire() @ self.right_tensor.fire()
         self.has_cached = True
@@ -102,23 +122,28 @@ class MultiplyNode:
 
 # A node representing addition between two tensors
 class AdditionNode:
-    def __init__(self, tensor1, tensor2):
+    def __init__(self, tensor1, tensor2, name='addition'):
         assert tensor1.shape == tensor2.shape, 'input shapes don\'t match!'
         self.tensor1, self.tensor2 = tensor1, tensor2
         self.children = []  # add children from outside
         self.parents = [tensor1, tensor2]
+        tensor1.children.append(self)
+        tensor2.children.append(self)
         self.shape = tensor1.shape  # shape of the output. could have also made it tensor2.shape
 
         self.value, self.gradients, self.has_cached = None, None, None  # good practice to initialize in constructor
         self.reset()
 
-    def reset(self):
+        self.name = name
+
+    def reset(self, hard=False):
         self.has_cached = False  # this will allow self.value to be overwritten automatically
         self.gradients = {self.tensor1: np.zeros(self.tensor1.shape),
                           self.tensor2: np.zeros(self.tensor2.shape)}
-        for parent in self.parents: parent.reset()  # clean parents, recursively
+        for parent in self.parents: parent.reset(hard)  # clean parents, recursively
 
     def fire(self):
+        if print_fired: print(self.name, 'was fired.')
         # If we haven't already computed this, compute it. Otherwise use cached.
         if not self.has_cached: self.value = self.tensor1.fire() + self.tensor2.fire()
         self.has_cached = True
@@ -134,9 +159,9 @@ class AdditionNode:
 
 # A node representing the squared loss, given a mini-batch of activations, and corresponding labels.
 # For homoskedastic regression, where we simply output a mu:   1/2m * |mu-y|^2. Calculate fixed variance as mean((mu-y)^2).
-# For heteroskedastic regression, where we output the std:
+# For heteroskedastic regression, where we output the std: <TODO: fill in>
 class SquaredLossNode:
-    def __init__(self, mu, y, std=None):
+    def __init__(self, mu, y, std=None, name='squared_loss'):
         assert mu.shape == y.shape, 'mu & y shapes don\'t match!'
         if std is not None:
             assert std.shape == mu.shape, 'std shape doesn\'t match!'
@@ -144,19 +169,24 @@ class SquaredLossNode:
 
         self.mu, self.y = mu, y
         self.parents = [mu, y]
+        mu.children.append(self)
+        y.children.append(self)
         self.shape = (1, 1)
         self.children = []  # add from outside. loss node can have children, like addition nodes, for adding losses
 
         self.value, self.gradients, self.has_cached = None, None, None  # good practice to initialize in constructor
         self.reset()
 
-    def reset(self):
+        self.name = name
+
+    def reset(self, hard=False):
         self.has_cached = False  # this will allow self.value to be overwritten automatically
         self.gradients = {self.mu: np.zeros(self.mu.shape)}
         if hasattr(self, 'std'): self.gradients[self.std] = np.zeros(self.std.shape)
-        for parent in self.parents: parent.reset()  # clean parents, recursively
+        for parent in self.parents: parent.reset(hard)  # clean parents, recursively
 
     def fire(self):
+        if print_fired: print(self.name, 'was fired.')
         # If we haven't already computed this, compute it. Otherwise use cached.
         sigma = np.ones_like(self.mu) * (self.std if hasattr(self, 'std') else 1)
         if not self.has_cached: self.value = 0.5 * (np.linalg.norm((self.y - self.mu) / sigma) ** 2) + sum(np.log(sigma))  # will reduce to MSE if sigma is just vector of ones

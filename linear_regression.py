@@ -44,9 +44,9 @@ quad_buffer = ctx.buffer(data=np.array([
 ], dtype='f').tobytes())
 
 # Import vertex and frag shaders
-with open('vert_regression.glsl', 'r') as file:
+with open('vert_linear.glsl', 'r') as file:
     vert_shader = file.read()
-with open('frag_regression.glsl', 'r') as file:
+with open('frag_linear.glsl', 'r') as file:
     frag_shader = file.read()
 
 # Kind of "bundle up" the two shader programs (vert & frag) together. This'll compile them too, I think.
@@ -78,9 +78,27 @@ def A_many(vals):
 
 
 # THE ACTUAL CODE STARTS HERE —————————————————————————————————————————————————————————————————————————————————
-x_train, y_train = [], []
+# Training data (raw, not normalized)
+x_train, y_train = [0., 100.], [0., 100.]
+
+# Build computation graph (TensorNode, TensorNode(learnable)) --> Multiplication Node --> SquaredLossNode <-- TensorNode
+# Create the nodes (for homoskedastic linear regression, for now)
+X = TensorNode(learnable=False, shape=(len(x_train), 3), name='X_data')  # one extra feature for bias term
+y = TensorNode(learnable=False, shape=(len(y_train), 1), name='y_labels')
+W = TensorNode(learnable=True, shape=(3, 1), name='Weights')  # 2 weights + 1 bias
+XW = MultiplicationNode(X, W)
+Loss = SquaredLossNode(mu=XW, y=y)
+# List of all nodes, for convenience
+node_list = [X, y, W, XW, Loss]
+
+# TODO Testing:
 
 
+
+# Training parameters
+should_retrain = True
+max_epochs = 10
+current_epoch = 0  # we'll increment by 1 before current the first epoch
 
 # Additional vars (for drawing and such)
 drag_idx = -1  # index of point being moved. -1 if none
@@ -94,6 +112,7 @@ colors = {
     'fullblue': np.array([0, 0, 255]),
     'START': np.array([255, 255, 255])
 }
+prev_mouse_pos = np.array([0.,0.])
 
 
 # Key handling # Example: keys_pressed[pygame.K_p]
@@ -103,7 +122,7 @@ def handle_keys(keys_pressed):
 
 # Mouse handling
 def handle_mouse(event):
-    global x_train, y_train, point_radius, drag_idx
+    global x_train, y_train, point_radius, drag_idx, should_retrain
     # Either add a new point or select existing one for dragging
     if drag_idx == -1:
         pos = A_inv(pygame.mouse.get_pos())
@@ -112,11 +131,14 @@ def handle_mouse(event):
         else:
             x_train.append(pos[0])
             y_train.append(pos[1])
+            should_retrain = True
     # Stop tracking the dragging point
     else: drag_idx = -1
 
 
 def main():
+    global prev_mouse_pos, should_retrain, current_epoch, max_epochs
+
     # Pre-gameloop stuff
     run = True
 
@@ -127,9 +149,22 @@ def main():
         screen.fill((0, 0, 0, 0))  # make background black + transparent
 
         # UPDATE MODEL / DATA ————
-        # Move point being dragged to mouse location
+        # Move point being dragged to mouse location. If it's a new drag location, need to restart training.
+        mouse_pos = A_inv(pygame.mouse.get_pos())
         if drag_idx != -1:
-            x_train[drag_idx], y_train[drag_idx] = tuple(A_inv(pygame.mouse.get_pos()))
+            x_train[drag_idx], y_train[drag_idx] = tuple(mouse_pos)
+            should_retrain = should_retrain or np.linalg.norm(prev_mouse_pos - mouse_pos) > 1e-10
+        # Set this mouse position to the old one
+        prev_mouse_pos = mouse_pos
+
+        # Actual model training step. Restart if needed. TODO: Implement
+        current_epoch += 1
+        if current_epoch <= max_epochs:
+            pass # we'll just implement the forward / backward passes and stuff right here!
+
+        # if should_retrain:
+        #     print('retrain', np.random.random())
+        #     should_retrain = False
 
 
         # DRAW USING PYGAME COMMANDS ————
