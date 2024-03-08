@@ -79,7 +79,10 @@ def A_many(vals):
 
 # THE ACTUAL CODE STARTS HERE —————————————————————————————————————————————————————————————————————————————————
 # Training data (raw, not normalized)
-x_train, y_train = [0., 100., 300., -50.], [0., 100., 200., -40]
+# x_train, y_train = [0., 100., 300., -50.], [0., 100., 200., -40]
+x_train, y_train = [0., 100., 200., -50.], [50., 150., 250., 0.]
+# x_train = list(np.linspace(0, 99, 100))
+# y_train = [x + 200 for x in x_train]  # Since y = x + 50
 
 # Build computation graph (TensorNode, TensorNode(learnable)) --> Multiplication Node --> SquaredLossNode <-- TensorNode
 # Create the nodes (for homoskedastic linear regression, for now)
@@ -96,22 +99,35 @@ W.value[1, 0] = 0.01
 
 # Training parameters
 h = 1e-5  # for gradient checking
-should_retrain = True
-max_epochs = 100
+should_retrain = False
+max_epochs = 1000
 current_epoch = 0  # we'll increment by 1 before current the first epoch
 
 
 # Preprocessing
-def preprocess():
-    global x_train, y_train
-    # (a) Normalize
-    x_input = (x_train - np.mean(x_train)) / np.std(x_train)
-    y_input = (y_train - np.mean(y_train)) / np.std(y_train)
-    # (b) Reshape
-    x_input = np.reshape(x_input, (len(x_input), 1))
-    x_input = np.hstack((x_input, np.ones((len(x_train), 1))))  # bias trick
-    y_input = np.reshape(y_input, (len(y_train), 1))
+def preprocess(x_raw=None, y_raw=None):
+    assert x_raw is not None or y_raw is not None, 'what do u even want me to preprocess, fool?'
+    x_input, y_input = None, None
+    if x_raw is not None:
+        x_raw = np.array(x_raw)
+        # x_input = (x_raw - np.mean(x_raw)) / np.std(x_raw)
+        x_input = x_raw
+        x_input = np.reshape(x_input, (len(x_input), 1))
+        x_input = np.hstack((x_input, 100 * np.ones((len(x_raw), 1))))  # bias trick
+    if y_raw is not None:
+        # y_input = (y_raw - np.mean(y_raw)) / np.std(y_raw)
+        # y_input = np.reshape(y_input, (len(y_raw), 1))
+        y_input = np.reshape(y_raw, (len(y_raw), 1))
+
     return x_input, y_input
+
+
+# Postprocessing of the output
+def postprocess(y_raw):
+    return np.reshape(y_raw, (1, y_raw.shape[0]))[0]
+    # global y_train  # very sloppy implementation, but bare with me
+    # y_output = np.reshape(y_raw, (1, y_raw.shape[0]))[0]
+    # return (y_output * np.std(y_train)) + np.mean(y_train)
 
 
 # Optional gradient checking
@@ -119,7 +135,9 @@ def grad_check(x_input, y_input):
     global X, y, Loss, W, XW, h
     X.set_input(x_input)
     y.set_input(y_input)
+    Loss.reset()
     for flat_idx in [0, 1]:
+        print('Checking gradient for', W.name, flat_idx, 'parameter.')
         Loss.fire()
         Loss.backfire()
         old, actual_grad = W.get_values_from_flat(flat_idx)
@@ -132,9 +150,11 @@ def grad_check(x_input, y_input):
         Loss.reset()
         numerical_grad = ((Jplus - Jminus) / (2 * h))[0]
         W.set_value_from_flat(old, flat_idx)
-        print('Jplus:', Jplus, 'Jminus:', Jminus)
+        # print('Jplus:', Jplus, 'Jminus:', Jminus)
         print('Actual:', actual_grad)
         print('Numerical:', numerical_grad)  # TODO: Implement a legit comparison, e.g. relative error.
+        rel_error = abs(actual_grad - numerical_grad) / max(abs(actual_grad), abs(numerical_grad))
+        print('Relative error between the two:', rel_error)
         print()
 
 
@@ -160,12 +180,14 @@ def train_step(x_input, y_input):
     # print()
 
     Loss.backfire()
-    W.update({'alpha': 0.01})
+    # print('W', W.get_values_from_flat(1))
+    W.update({'alpha': 0.000001})
 
 
 # Additional vars (for drawing and such)
 drag_idx = -1  # index of point being moved. -1 if none
 point_radius = 10
+n_samples = 100  # number of samples for drawing the learned curve
 colors = {
     'white': np.array([255., 255., 255.]),
     'black': np.array([0., 0., 0.]),
@@ -200,16 +222,17 @@ def handle_mouse(event):
 
 
 def main():
-    global prev_mouse_pos, should_retrain, current_epoch, max_epochs, X, y, W, XW, Loss, x_train, y_train
+    global prev_mouse_pos, point_radius, n_samples, should_retrain, current_epoch, max_epochs, X, y, W, XW, Loss, x_train, y_train
 
     # Pre-gameloop stuff
     run = True
+    font = pygame.font.Font('/Users/adityaabhyankar/Library/Fonts/cmunrm.ttf', 36)
 
     # Game loop
     count = 0
     while run:
         # Reset stuff
-        screen.fill((0, 0, 0, 0))  # make background black + transparent
+        screen.fill((0, 0, 0, 1.0))  # make background black + transparent (TODO: hmm... making it transparent messes with text that is blit to the screen)
 
         # UPDATE MODEL / DATA ————
         # Move point being dragged to mouse location. If it's a new drag location, need to restart training.
@@ -221,8 +244,8 @@ def main():
         prev_mouse_pos = mouse_pos
 
         # Actual training of the model!
-        # (1)Preprocess
-        x_input, y_input = preprocess()
+        # (1) Preprocess
+        x_input, y_input = preprocess(x_train, y_train)
         # (2) Optional gradcheck (comment out if done checking)
         # grad_check(x_input, y_input)
         # break
@@ -230,8 +253,11 @@ def main():
         if current_epoch <= max_epochs:
             current_epoch += 1
             train_step(x_input, y_input)
-        elif should_retrain:
+
+        if should_retrain:
             current_epoch = 0
+            # Loss.reset(hard=True)  TODO: Should the weights really start all over, or no?
+            # W.value[1, 0] = 0.01
             should_retrain = False
 
         # DRAW USING PYGAME COMMANDS ————
@@ -239,6 +265,16 @@ def main():
         for x_, y_ in zip(x_train, y_train):
             pygame.draw.circle(screen, colors['white'], A([x_,y_]), radius=point_radius, width=0)
 
+        # Draw learned curve
+        x_test = np.linspace(-width/2, width/2, n_samples)
+        x_input, _ = preprocess(x_raw=x_test)
+        y_output = postprocess(x_input @ W.value)
+        pts = [np.array([x_, y_]) for x_, y_ in zip(x_test, y_output)]
+        pygame.draw.lines(screen, colors['red'], False, A_many(pts), width=2)
+
+        # Draw training epochs
+        text = font.render('Epoch: '+str(min(current_epoch, max_epochs))+'/'+str(max_epochs), True, colors['red'])
+        screen.blit(text, (width/2, 40))
 
         # Handle keys + mouse
         keys_pressed = pygame.key.get_pressed()

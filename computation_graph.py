@@ -42,6 +42,7 @@ np.set_printoptions(linewidth=np.inf)
 print_fired = False
 reset_reminder = False
 tensor_updates = False
+flat_set_message = False
 
 
 # A node representing a scalar, vector, matrix, or arbitrary dimension "tensor"
@@ -91,7 +92,7 @@ class TensorNode:
 
     def set_value_from_flat(self, new_val, flat_idx):
         assert self.learnable, str(self.name) + ' is not learnable, are you sure you want to be doing this?'
-        print(self.name, 'node was explicitly set (outside of optimization).')
+        if flat_set_message: print(self.name, 'node was explicitly set (outside of optimization).')
         idx = np.unravel_index(flat_idx, self.shape)
         self.value[idx] = new_val
 
@@ -130,7 +131,7 @@ class MultiplicationNode:
         for parent in self.parents: parent.reset(hard)  # clean parents, recursively
 
     def __reset_shape__(self):
-        for parent in self.parents: parent.__reset_shape__()
+        for parent in self.parents: parent.__reset_shape__()  # set the shape of the parents first
         self.shape = (self.left_tensor.shape[0], self.right_tensor.shape[1])  # shape of the output
 
     def fire(self):
@@ -175,7 +176,7 @@ class AdditionNode:
         for parent in self.parents: parent.reset(hard)  # clean parents, recursively
 
     def __reset_shape__(self):
-        for parent in self.parents: parent.__reset_shape__()
+        for parent in self.parents: parent.__reset_shape__()  # set the shape of the parents first
         self.shape = self.tensor1.shape  # shape of the output. could have also made it tensor2.shape
 
     def fire(self):
@@ -232,7 +233,7 @@ class SquaredLossNode:
     def fire(self):
         # If we haven't already computed this, compute it. Otherwise use cached.
         sigma = np.ones_like(self.mu.fire()) * (self.std.fire() if hasattr(self, 'std') else 1)
-        if not self.has_cached: self.value = 0.5 * (np.linalg.norm((self.y.fire() - self.mu.fire()) / sigma) ** 2) + sum(np.log(sigma))  # will reduce to MSE if sigma is just vector of ones
+        if not self.has_cached: self.value = (0.5 * (np.linalg.norm((self.y.fire() - self.mu.fire()) / sigma) ** 2) + sum(np.log(sigma)))  # will reduce to MSE if sigma is just vector of ones
         elif print_fired: print('<used cached> ', end='')
         self.has_cached = True
         if print_fired: print(self.name, 'was fired.')
