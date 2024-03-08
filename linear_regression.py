@@ -1,3 +1,16 @@
+# Stuff I learned / observations:
+# (1) It really is key for all the features to be within the same ballpark.
+#     The reason only the slope was fitting and not the bias term is because
+#     the bias term was far too small, i.e. initial value of 1 * 0.01, while
+#     the other inputs were in their hundreds, making their gradients far
+#     larger than the gradient for the bias term.
+# (2) The SAME normalization that you apply for the input training data must be
+#     used at test time; i.e. the mean and std of the training data must be saved.
+#     This is crucial so that the test data is in the same scope as the training data.
+# (3) The square loss function can either include or disclude the 1/N factor, you're
+#     still optimizing the same thing, at the end of the day.
+#
+#
 # Steps for linear regression:
 # (1) Set up pygame surface with TRANSPARENCY + opengl support (visualized output should be from shaders, which maybe set transparent pixels to white)
 # (2) Allow for clicking + dragging of points
@@ -79,10 +92,8 @@ def A_many(vals):
 
 # THE ACTUAL CODE STARTS HERE —————————————————————————————————————————————————————————————————————————————————
 # Training data (raw, not normalized)
-# x_train, y_train = [0., 100., 300., -50.], [0., 100., 200., -40]
-# x_train, y_train = [0., 100., 200., -50.], [50., 150., 250., 0.]
-x_train = list(np.linspace(0, 99, 100))
-y_train = [x + 200 for x in x_train]  # Since y = x + 50
+x_train = list(np.linspace(-width/2, width/2, 100))
+y_train = [-0.5 * x - 100 + np.random.randint(-100, 100) for x in x_train]
 
 # Data normalization parameters (need to use the same ones at test time)
 x_mean, x_std = np.mean(x_train), np.std(x_train)
@@ -191,7 +202,7 @@ def train_step(x_input, y_input):
 
 # Additional vars (for drawing and such)
 drag_idx = -1  # index of point being moved. -1 if none
-point_radius = 10
+point_radius = 5
 n_samples = 100  # number of samples for drawing the learned curve
 colors = {
     'white': np.array([255., 255., 255.]),
@@ -227,7 +238,8 @@ def handle_mouse(event):
 
 
 def main():
-    global prev_mouse_pos, point_radius, n_samples, should_retrain, current_epoch, max_epochs, X, y, W, XW, Loss, x_train, y_train
+    global prev_mouse_pos, point_radius, n_samples, should_retrain, current_epoch, max_epochs,\
+        X, y, W, XW, Loss, x_train, y_train, x_mean, x_std, y_mean, y_std
 
     # Pre-gameloop stuff
     run = True
@@ -259,11 +271,13 @@ def main():
             current_epoch += 1
             train_step(x_input, y_input)
 
+        # Essentially more epochs to the training if the data has changed
         if should_retrain:
             current_epoch = 0
-            # Loss.reset(hard=True)  TODO: Should the weights really start all over, or no?
-            # W.value[1, 0] = 0.01
             should_retrain = False
+            # Renormalize the data
+            x_mean, x_std = np.mean(x_train), np.std(x_train)
+            y_mean, y_std = np.mean(y_train), np.std(y_train)
 
         # DRAW USING PYGAME COMMANDS ————
         # Draw training points
@@ -279,7 +293,7 @@ def main():
 
         # Draw training epochs
         text = font.render('Epoch: '+str(min(current_epoch, max_epochs))+'/'+str(max_epochs), True, colors['red'])
-        screen.blit(text, (width/2, 40))
+        screen.blit(text, (width/2 - 120, 40))
 
         # Handle keys + mouse
         keys_pressed = pygame.key.get_pressed()
