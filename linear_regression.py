@@ -94,24 +94,61 @@ node_list = [X, y, W, XW, Loss]
 
 # TODO <delete> Testing:
 # Set the inputs of input nodes
-# (1) Preprocess (TODO: normalize, etc)
-x_input = np.reshape(x_train, (len(x_train), 1))
+# (1) Preprocess
+# (a) Normalize
+x_input = (x_train - np.mean(x_train)) / np.std(x_train)
+y_input = (y_train - np.mean(y_train)) / np.std(y_train)
+# (b) Reshape
+x_input = np.reshape(x_input, (len(x_input), 1))
 x_input = np.hstack((x_input, np.ones((len(x_train), 1))))  # bias trick
+y_input = np.reshape(y_input, (len(y_train), 1))
 # (2) Actually set the inputs
 X.set_input(x_input)
-y.set_input(np.reshape(y_train, (len(y_train), 1)))
+y.set_input(y_input)
 # (3) Initialize weights and biases (TODO: finish)
 W.value[1,0] = 0.01
-# Training step
-Loss.fire()
-Loss.backfire()
-print(Loss.value)
-
 
 # Training parameters
 should_retrain = True
-max_epochs = 10
+max_epochs = 100
 current_epoch = 0  # we'll increment by 1 before current the first epoch
+
+# # Let's do gradient checking now
+# h = 1e-5
+# for flat_idx in [0, 1]:
+#     Loss.fire()
+#     Loss.backfire()
+#     old, actual_grad = W.get_values_from_flat(flat_idx)
+#     Loss.reset()
+#     W.set_value_from_flat(old + h, flat_idx)
+#     Jplus = Loss.fire()
+#     Loss.reset()
+#     W.set_value_from_flat(old - h, flat_idx)
+#     Jminus = Loss.fire()
+#     Loss.reset()
+#     numerical_grad = ((Jplus - Jminus) / (2 * h))[0]
+#     W.set_value_from_flat(old, flat_idx)
+#     print('Jplus:', Jplus, 'Jminus:', Jminus)
+#     print('Actual:', actual_grad)
+#     print('Numerical:', numerical_grad)  # TODO: Implement a legit comparison, e.g. relative error.
+#     print()
+
+
+# The actual training
+while current_epoch < max_epochs:
+    X.set_input(x_input)  # In real ML problems, we'd iterate over mini-batches and set X's value to each mini-batch's value. 1 epoch = all mini-batches done.
+    y.set_input(y_input)
+    Loss.fire()
+    # print('X', X.value)
+    # print('y', y.value)
+    # print('W', W.value)
+    # print('XW', XW.value)
+    print('Loss', Loss.value)
+    print()
+    Loss.backfire()
+    W.update({'alpha': 0.01})
+    Loss.reset()
+    current_epoch += 1
 
 # Additional vars (for drawing and such)
 drag_idx = -1  # index of point being moved. -1 if none

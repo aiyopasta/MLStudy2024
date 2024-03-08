@@ -24,11 +24,12 @@
 # (4) for each LEARNABLE TensorNode:                   <-- TensorNodes are the ONLY kind of nodes that can be learnable
 #         for flat_idx in [1, 2, 3]:                   <-- this loop is necessary as we ONLY want to perturb one param at a time
 #             old, actual_grad = node.get_values_from_flat(flat_idx)
+#             loss.reset()
 #             node.set_value_from_flat(old + epsilon, flat_idx)
-#             Jplus = loss.fire()
+#             Jplus = loss.fire(); loss.reset()
 #             node.set_value_from_flat(old - epsilon, flat_idx)
-#             Jminus = loss.fire()
-#             numerical_grad = (Jplus + Jminus) / (2 * epsilon)
+#             Jminus = loss.fire(); loss.reset()
+#             numerical_grad = (Jplus - Jminus) / (2 * epsilon)
 #             compare(numerical_grad, actual_grad)
 #             node.set_value_from_flat(old, flat_idx)
 #
@@ -38,7 +39,8 @@ np.set_printoptions(suppress=True)
 np.set_printoptions(linewidth=np.inf)
 
 # Debugging prints
-print_fired = True
+print_fired = False
+reset_reminder = True
 
 
 # A node representing a scalar, vector, matrix, or arbitrary dimension "tensor"
@@ -54,15 +56,16 @@ class TensorNode:
         self.name = name
 
     def set_input(self, tensor:np.ndarray):
-        ''' Use it to load in a new batch of training examples. '''
-        if not self.learnable and True: print('Non-learnable tensor', self.name, 'was reset.')
+        ''' Use it to load in a new batch of training examples, or setting new parameter values. '''
+        if not self.learnable and True: print('Non-parameter tensor', self.name, 'was given a new value.')
+        if self.learnable and True: print('Parameter tensor', self.name, 'was updated.')
         self.value = tensor
         self.gradient = np.zeros_like(tensor)
         self.shape = tensor.shape
 
     def reset(self, hard=False):
-        ''' hard reset sets learnable parameters of the graph to 0s as well '''
-        if (not self.learnable) or hard: self.value = np.zeros(self.shape)
+        ''' hard reset sets all inputs (learnable or not) of the graph to 0s as well '''
+        if hard: self.value = np.zeros(self.shape)
         self.gradient = np.zeros(self.shape)
 
     def fire(self):
@@ -75,13 +78,22 @@ class TensorNode:
         if self.learnable:
             self.gradient += from_child.gradients[self]  # reverse DFS hits dead-end here
 
+    def update(self, params: dict, method='GD'):
+        ''' Run an optimization step, based on computed gradient. GD = gradient descent, TODO: Add more! '''
+        if method == 'GD':
+            assert 'alpha' in params
+            alpha = params['alpha']
+            self.set_input(self.value - (alpha * self.gradient))
+
     def set_value_from_flat(self, new_val, flat_idx):
+        assert self.learnable, str(self.name) + ' is not learnable, are you sure you want to be doing this?'
+        print(self.name, 'node was explicitly set (outside of optimization).')
         idx = np.unravel_index(flat_idx, self.shape)
         self.value[idx] = new_val
 
     def get_values_from_flat(self, flat_idx):
         idx = np.unravel_index(flat_idx, self.shape)
-        return self.value[idx], self.gradient[idx]
+        return copy.copy(self.value[idx]), copy.copy(self.gradient[idx])
 
     def __call__(self, *args, **kwargs):
         return self.fire()
@@ -116,7 +128,7 @@ class MultiplicationNode:
     def fire(self):
         # If we haven't already computed this, compute it. Otherwise use cached.
         if not self.has_cached: self.value = self.left_tensor.fire() @ self.right_tensor.fire()
-        else: print('<used cached> ', end='')
+        elif print_fired: print('<used cached> ', end='')
         self.has_cached = True
         if print_fired: print(self.name, 'was fired.')
         return self.value
@@ -157,7 +169,7 @@ class AdditionNode:
     def fire(self):
         # If we haven't already computed this, compute it. Otherwise use cached.
         if not self.has_cached: self.value = self.tensor1.fire() + self.tensor2.fire()
-        else: print('<used cached> ', end='')
+        elif print_fired: print('<used cached> ', end='')
         self.has_cached = True
         if print_fired: print(self.name, 'was fired.')
         return self.value
@@ -205,7 +217,7 @@ class SquaredLossNode:
         # If we haven't already computed this, compute it. Otherwise use cached.
         sigma = np.ones_like(self.mu.fire()) * (self.std.fire() if hasattr(self, 'std') else 1)
         if not self.has_cached: self.value = 0.5 * (np.linalg.norm((self.y.fire() - self.mu.fire()) / sigma) ** 2) + sum(np.log(sigma))  # will reduce to MSE if sigma is just vector of ones
-        else: print('<used cached> ', end='')
+        elif print_fired: print('<used cached> ', end='')
         self.has_cached = True
         if print_fired: print(self.name, 'was fired.')
         return self.value
@@ -215,7 +227,7 @@ class SquaredLossNode:
         assert hasattr(from_child, 'gradients') or from_child is None
         child_gradient = from_child.gradient[self] if from_child is not None else 1.  # note that it will be a real number!
         sigma = np.ones_like(self.mu()) * (self.std if hasattr(self, 'std') else 1)
-        self.gradients[self.mu] += 0.5 * ((self.mu() - self.y()) / (sigma ** 2)) * child_gradient
+        self.gradients[self.mu] += ((self.mu() - self.y()) / (sigma ** 2)) * child_gradient
         if hasattr(self, 'std'): self.gradients[self.std] += ((- ((self.y() - self.mu()) ** 2) / (self.std() ** 3)) + (1. / self.std())) * child_gradient
         for parent in self.parents: parent.backfire(self)
         # Dumb note about what highschool me was confused about LOL
@@ -223,6 +235,7 @@ class SquaredLossNode:
         # (ui - yi)^2 = ui^2 - 2yiui + yi^2  --->  2ui - 2yi = 2(ui - yi)
         # chain rule on (1): -2(yi - ui) = 2(ui - yi)
         # chain rule on (2): 2(ui - yi)
+        if reset_reminder: print('MAKE SURE YOU CALL RESET AFTER THIS!')
 
     def __call__(self, *args, **kwargs):
         return self.fire()
