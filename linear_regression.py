@@ -91,64 +91,77 @@ Loss = SquaredLossNode(mu=XW, y=y)
 # List of all nodes, for convenience
 node_list = [X, y, W, XW, Loss]
 
-
-# TODO <delete> Testing:
-# Set the inputs of input nodes
-# (1) Preprocess
-# (a) Normalize
-x_input = (x_train - np.mean(x_train)) / np.std(x_train)
-y_input = (y_train - np.mean(y_train)) / np.std(y_train)
-# (b) Reshape
-x_input = np.reshape(x_input, (len(x_input), 1))
-x_input = np.hstack((x_input, np.ones((len(x_train), 1))))  # bias trick
-y_input = np.reshape(y_input, (len(y_train), 1))
-# (2) Actually set the inputs
-X.set_input(x_input)
-y.set_input(y_input)
-# (3) Initialize weights and biases (TODO: finish)
-W.value[1,0] = 0.01
+# Initialize weights & biases for training. TODO: Finish (don't set W=0)
+W.value[1, 0] = 0.01
 
 # Training parameters
+h = 1e-5  # for gradient checking
 should_retrain = True
 max_epochs = 100
 current_epoch = 0  # we'll increment by 1 before current the first epoch
 
-# # Let's do gradient checking now
-# h = 1e-5
-# for flat_idx in [0, 1]:
-#     Loss.fire()
-#     Loss.backfire()
-#     old, actual_grad = W.get_values_from_flat(flat_idx)
-#     Loss.reset()
-#     W.set_value_from_flat(old + h, flat_idx)
-#     Jplus = Loss.fire()
-#     Loss.reset()
-#     W.set_value_from_flat(old - h, flat_idx)
-#     Jminus = Loss.fire()
-#     Loss.reset()
-#     numerical_grad = ((Jplus - Jminus) / (2 * h))[0]
-#     W.set_value_from_flat(old, flat_idx)
-#     print('Jplus:', Jplus, 'Jminus:', Jminus)
-#     print('Actual:', actual_grad)
-#     print('Numerical:', numerical_grad)  # TODO: Implement a legit comparison, e.g. relative error.
-#     print()
+
+# Preprocessing
+def preprocess():
+    global x_train, y_train
+    # (a) Normalize
+    x_input = (x_train - np.mean(x_train)) / np.std(x_train)
+    y_input = (y_train - np.mean(y_train)) / np.std(y_train)
+    # (b) Reshape
+    x_input = np.reshape(x_input, (len(x_input), 1))
+    x_input = np.hstack((x_input, np.ones((len(x_train), 1))))  # bias trick
+    y_input = np.reshape(y_input, (len(y_train), 1))
+    return x_input, y_input
 
 
-# The actual training
-while current_epoch < max_epochs:
+# Optional gradient checking
+def grad_check(x_input, y_input):
+    global X, y, Loss, W, XW, h
+    X.set_input(x_input)
+    y.set_input(y_input)
+    for flat_idx in [0, 1]:
+        Loss.fire()
+        Loss.backfire()
+        old, actual_grad = W.get_values_from_flat(flat_idx)
+        Loss.reset()
+        W.set_value_from_flat(old + h, flat_idx)
+        Jplus = Loss.fire()
+        Loss.reset()
+        W.set_value_from_flat(old - h, flat_idx)
+        Jminus = Loss.fire()
+        Loss.reset()
+        numerical_grad = ((Jplus - Jminus) / (2 * h))[0]
+        W.set_value_from_flat(old, flat_idx)
+        print('Jplus:', Jplus, 'Jminus:', Jminus)
+        print('Actual:', actual_grad)
+        print('Numerical:', numerical_grad)  # TODO: Implement a legit comparison, e.g. relative error.
+        print()
+
+
+# One step of training
+def train_step(x_input, y_input):
+    global X, y, Loss, W, XW
     X.set_input(x_input)  # In real ML problems, we'd iterate over mini-batches and set X's value to each mini-batch's value. 1 epoch = all mini-batches done.
     y.set_input(y_input)
+    Loss.reset()
     Loss.fire()
     # print('X', X.value)
     # print('y', y.value)
     # print('W', W.value)
     # print('XW', XW.value)
     print('Loss', Loss.value)
-    print()
+    # print()
+
+    # print('X', X.shape)
+    # print('y', y.shape)
+    # print('W', W.shape)
+    # print('XW', XW.shape)
+    # print('Loss', Loss.shape)
+    # print()
+
     Loss.backfire()
     W.update({'alpha': 0.01})
-    Loss.reset()
-    current_epoch += 1
+
 
 # Additional vars (for drawing and such)
 drag_idx = -1  # index of point being moved. -1 if none
@@ -187,7 +200,7 @@ def handle_mouse(event):
 
 
 def main():
-    global prev_mouse_pos, should_retrain, current_epoch, max_epochs
+    global prev_mouse_pos, should_retrain, current_epoch, max_epochs, X, y, W, XW, Loss, x_train, y_train
 
     # Pre-gameloop stuff
     run = True
@@ -207,20 +220,24 @@ def main():
         # Set this mouse position to the old one
         prev_mouse_pos = mouse_pos
 
-        # Actual model training step. Restart if needed. TODO: Implement
-        current_epoch += 1
+        # Actual training of the model!
+        # (1)Preprocess
+        x_input, y_input = preprocess()
+        # (2) Optional gradcheck (comment out if done checking)
+        # grad_check(x_input, y_input)
+        # break
+        # (3) Train step, if not run out of epochs
         if current_epoch <= max_epochs:
-            pass # we'll just implement the forward / backward passes and stuff right here!
-
-        # if should_retrain:
-        #     print('retrain', np.random.random())
-        #     should_retrain = False
-
+            current_epoch += 1
+            train_step(x_input, y_input)
+        elif should_retrain:
+            current_epoch = 0
+            should_retrain = False
 
         # DRAW USING PYGAME COMMANDS ————
         # Draw training points
-        for x, y in zip(x_train, y_train):
-            pygame.draw.circle(screen, colors['white'], A([x,y]), radius=point_radius, width=0)
+        for x_, y_ in zip(x_train, y_train):
+            pygame.draw.circle(screen, colors['white'], A([x_,y_]), radius=point_radius, width=0)
 
 
         # Handle keys + mouse

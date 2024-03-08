@@ -40,7 +40,8 @@ np.set_printoptions(linewidth=np.inf)
 
 # Debugging prints
 print_fired = False
-reset_reminder = True
+reset_reminder = False
+tensor_updates = False
 
 
 # A node representing a scalar, vector, matrix, or arbitrary dimension "tensor"
@@ -57,8 +58,8 @@ class TensorNode:
 
     def set_input(self, tensor:np.ndarray):
         ''' Use it to load in a new batch of training examples, or setting new parameter values. '''
-        if not self.learnable and True: print('Non-parameter tensor', self.name, 'was given a new value.')
-        if self.learnable and True: print('Parameter tensor', self.name, 'was updated.')
+        if not self.learnable and tensor_updates: print('Non-parameter tensor', self.name, 'was given a new value.')
+        if self.learnable and tensor_updates: print('Parameter tensor', self.name, 'was updated.')
         self.value = tensor
         self.gradient = np.zeros_like(tensor)
         self.shape = tensor.shape
@@ -67,6 +68,9 @@ class TensorNode:
         ''' hard reset sets all inputs (learnable or not) of the graph to 0s as well '''
         if hard: self.value = np.zeros(self.shape)
         self.gradient = np.zeros(self.shape)
+
+    def __reset_shape__(self):
+        pass  # base case of __reset_shape__() DFS
 
     def fire(self):
         if print_fired: print(self.name, 'was fired.')
@@ -112,18 +116,22 @@ class MultiplicationNode:
         self.parents = [tensor1, tensor2]
         tensor1.children.append(self)
         tensor2.children.append(self)
-        self.shape = (tensor1.shape[0], tensor2.shape[1])  # shape of the output
 
-        self.value, self.gradients, self.has_cached = None, None, None  # good practice to initialize in constructor
+        self.value, self.gradients, self.has_cached, self.shape = None, None, None, None  # good practice to initialize in constructor
         self.reset()
 
         self.name = name
 
     def reset(self, hard=False):
+        self.__reset_shape__()
         self.has_cached = False  # this will allow self.value to be overwritten automatically
         self.gradients = {self.left_tensor: np.zeros(self.left_tensor.value.shape),
                           self.right_tensor: np.zeros(self.right_tensor.value.shape)}
         for parent in self.parents: parent.reset(hard)  # clean parents, recursively
+
+    def __reset_shape__(self):
+        for parent in self.parents: parent.__reset_shape__()
+        self.shape = (self.left_tensor.shape[0], self.right_tensor.shape[1])  # shape of the output
 
     def fire(self):
         # If we haven't already computed this, compute it. Otherwise use cached.
@@ -153,18 +161,22 @@ class AdditionNode:
         self.parents = [tensor1, tensor2]
         tensor1.children.append(self)
         tensor2.children.append(self)
-        self.shape = tensor1.shape  # shape of the output. could have also made it tensor2.shape
 
-        self.value, self.gradients, self.has_cached = None, None, None  # good practice to initialize in constructor
+        self.value, self.gradients, self.has_cached, self.shape = None, None, None, None  # good practice to initialize in constructor
         self.reset()
 
         self.name = name
 
     def reset(self, hard=False):
+        self.__reset_shape__()
         self.has_cached = False  # this will allow self.value to be overwritten automatically
         self.gradients = {self.tensor1: np.zeros(self.tensor1.shape),
                           self.tensor2: np.zeros(self.tensor2.shape)}
         for parent in self.parents: parent.reset(hard)  # clean parents, recursively
+
+    def __reset_shape__(self):
+        for parent in self.parents: parent.__reset_shape__()
+        self.shape = self.tensor1.shape  # shape of the output. could have also made it tensor2.shape
 
     def fire(self):
         # If we haven't already computed this, compute it. Otherwise use cached.
@@ -199,19 +211,23 @@ class SquaredLossNode:
         self.parents = [mu, y]
         mu.children.append(self)
         y.children.append(self)
-        self.shape = (1, 1)
         self.children = []  # add from outside. loss node can have children, like addition nodes, for adding losses
 
-        self.value, self.gradients, self.has_cached = None, None, None  # good practice to initialize in constructor
+        self.value, self.gradients, self.has_cached, self.shape = None, None, None, None  # good practice to initialize in constructor
         self.reset()
 
         self.name = name
 
     def reset(self, hard=False):
+        self.__reset_shape__()
         self.has_cached = False  # this will allow self.value to be overwritten automatically
         self.gradients = {self.mu: np.zeros(self.mu.shape)}
         if hasattr(self, 'std'): self.gradients[self.std] = np.zeros(self.std.shape)
         for parent in self.parents: parent.reset(hard)  # clean parents, recursively
+
+    def __reset_shape__(self):
+        for parent in self.parents: parent.__reset_shape__()  # set the shape of the parents first
+        self.shape = (1, 1)
 
     def fire(self):
         # If we haven't already computed this, compute it. Otherwise use cached.
