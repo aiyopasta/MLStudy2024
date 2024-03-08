@@ -11,27 +11,31 @@
 #
 # So the training loop will look like:
 # (0) Fill input nodes (initialize weights, load mini-batch)
-# (1) loss.fire()
-# (2) loss.backfire()
-# (3) for each LEARNABLE TensorNode:
-#         node.update(alpha, mu)
-#         node.reset()                      <-- mark each as "unvisited" again, set gradients to 0
-#
-# The gradcheck procedure will look like:
-# (1) Load small batch (like 2-3) + initialize weights.
+# (1) node.reset()     (mark each as "unvisited" again, set gradients to 0)
 # (2) loss.fire()
 # (3) loss.backfire()
-# (4) for each LEARNABLE TensorNode:                   <-- TensorNodes are the ONLY kind of nodes that can be learnable
+# (4) for each LEARNABLE TensorNode:
+#         node.update(alpha, mu)
+#
+# The gradcheck procedure will look like:
+# (0) Load small batch (like 2-3) + initialize weights.
+# (1) loss.reset()
+# (2) loss.fire()
+# (3) loss.backfire()
+# (4) COPY each LEARNABLE TensorNode
+# (5) for each LEARNABLE TensorNode:                   <-- TensorNodes are the ONLY kind of nodes that can be learnable
 #         for flat_idx in [1, 2, 3]:                   <-- this loop is necessary as we ONLY want to perturb one param at a time
-#             old, actual_grad = node.get_values_from_flat(flat_idx)
+#             old, actual_grad = copy_of_this_node.get_values_from_flat(flat_idx)
 #             loss.reset()
 #             node.set_value_from_flat(old + epsilon, flat_idx)
-#             Jplus = loss.fire(); loss.reset()
+#             Jplus = loss.fire()
+#             loss.reset()
 #             node.set_value_from_flat(old - epsilon, flat_idx)
-#             Jminus = loss.fire(); loss.reset()
+#             Jminus = loss.fire()
+#             loss.reset()
 #             numerical_grad = (Jplus - Jminus) / (2 * epsilon)
-#             compare(numerical_grad, actual_grad)
 #             node.set_value_from_flat(old, flat_idx)
+#             compare(numerical_grad, actual_grad)
 #
 import copy
 import numpy as np
@@ -256,6 +260,13 @@ class SquaredLossNode:
 
     def __call__(self, *args, **kwargs):
         return self.fire()
+
+# LayerNorm node
+# (use it at the beginning of an MLP to not worry about rescaling features, or use in a transformer)
+class LayerNormNode:
+    def __init__(self, tensor, gamma, beta):
+        pass
+
 
 
 # Ridge, Lasso, and elastic

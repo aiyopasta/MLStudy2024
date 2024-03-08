@@ -1,27 +1,22 @@
-# Stuff I learned / observations:
-# (1) It really is key for all the features to be within the same ballpark.
-#     The reason only the slope was fitting and not the bias term is because
-#     the bias term was far too small, i.e. initial value of 1 * 0.01, while
-#     the other inputs were in their hundreds, making their gradients far
-#     larger than the gradient for the bias term.
-# (2) The SAME normalization that you apply for the input training data must be
-#     used at test time; i.e. the mean and std of the training data must be saved.
-#     This is crucial so that the test data is in the same scope as the training data.
-# (3) The square loss function can either include or disclude the 1/N factor, you're
-#     still optimizing the same thing, at the end of the day.
+# The same linear regression algorithm, but with a slight modification: Layer-norm.
+# Previously, I was normalizing the inputs in a "batchnorm" type of way; i.e. over the
+# entire training set (because here, the batches I'm using is simply the whole set).
+# But this is not what we actually want; we want the FEATURES of an INDIVIDUAL data point
+# to be within the same scope of each-other (e.g. in vanilla linreg, x should be on the
+# same order of 1, the bias feature). The batch-norm type thing I was doing earlier worked
+# well simply because I was choosing a mean of 0, std of 1 across all the batches. But this
+# is not ideal, especially since I'm planning on implementing more than just 2 features, i.e.
+# I'm gonna implement features like x^2, x^3, ... x^{arbitrary degree}. We truly just want
+# each FEATURE to be in the same scope, not the examples.
 #
 #
-# Steps for linear regression:
-# (1) Set up pygame surface with TRANSPARENCY + opengl support (visualized output should be from shaders, which maybe set transparent pixels to white)
-# (2) Allow for clicking + dragging of points
-# (3) We'll train algos on the full-batch, with no validation set for now.
-#     While iters < max_iters,
-#     (i) Preprocess the inputs: Normalize, perhaps put through some basis functions like 1, x, x^2, x^3, ....
-#     (ii) Use computation graph of the form: (TensorNode, TensorNode(learnable)) --> Multiplication Node --> SquaredLossNode
-#     to do a forward pass + a backwards pass. Make sure it at least RUNS. (See algo given in other file.)
-# (4) Use gradient checking (See algo given in other file) to verify gradients are being computed correctly.
-# (5) If the user clicks / drags a point, set iters = 0.
-# (6) For i in linspace(-window_width, window_width, increments), normalize i, query regression algo, plot line(s).
+# This is typically done with a layer-norm layer in the computation graph, with 2 learnable
+# parameters gamma and beta, which are the same dimension as the # of features. To be honest,
+# I don't fully understand why it's necessarily a good idea to include gamma, as the layer
+# afterwards (even in some parts of the transformer) is just a linear layer of an MLP, so
+# the weights can simply absorb that. There's probably a good reason, like maybe the MLP
+# should only be focused on "thinking" on the semantics of the output of the attention,
+# not be bothered with rescaling. Who knows? Probably Mr. Karpathy does.
 
 import moderngl
 import numpy as np
@@ -91,13 +86,15 @@ def A_many(vals):
 
 
 # THE ACTUAL CODE STARTS HERE —————————————————————————————————————————————————————————————————————————————————
+def polybasis(raw, degree=1.):
+    ''' raw: input training/testing data (raw, un-normalized) in the form [x1, x2, ..., xm] for m points
+        returns: [[x1^0=1, x1^1, x1^2, x1^3, ..., x1^degree]]
+    '''
+
+
 # Training data (raw, not normalized)
 x_train = list(np.linspace(-width/2, width/2, 100))
 y_train = [-0.5 * x - 100 + np.random.randint(-100, 100) for x in x_train]
-
-# Data normalization parameters (need to use the same ones at test time)
-x_mean, x_std = np.mean(x_train), np.std(x_train)
-y_mean, y_std = np.mean(y_train), np.std(y_train)
 
 # Build computation graph (TensorNode, TensorNode(learnable)) --> Multiplication Node --> SquaredLossNode <-- TensorNode
 # Create the nodes (for homoskedastic linear regression, for now)
@@ -121,27 +118,21 @@ current_epoch = 0  # we'll increment by 1 before current the first epoch
 
 # Preprocessing
 def preprocess(x_raw=None, y_raw=None):
-    global x_mean, x_std, y_mean, y_std
     assert x_raw is not None or y_raw is not None, 'what do u even want me to preprocess, fool?'
     x_input, y_input = None, None
     if x_raw is not None:
         x_raw = np.array(x_raw)
-        x_input = (x_raw - x_mean) / x_std
-        x_input = np.reshape(x_input, (len(x_input), 1))
+        x_input = np.reshape(x_raw, (len(x_raw), 1))
         x_input = np.hstack((x_input, 1 * np.ones((len(x_raw), 1))))  # bias trick
     if y_raw is not None:
-        y_input = (y_raw - y_mean) / y_std
-        y_input = np.reshape(y_input, (len(y_raw), 1))
+        y_input = np.reshape(y_raw, (len(y_raw), 1))
 
     return x_input, y_input
 
 
 # Postprocessing of the output
 def postprocess(y_raw):
-    # return np.reshape(y_raw, (1, y_raw.shape[0]))[0]
-    global y_mean, y_std  # very sloppy implementation, but bare with me
-    y_output = np.reshape(y_raw, (1, y_raw.shape[0]))[0]
-    return (y_output * y_std) + y_mean
+    return np.reshape(y_raw, (1, y_raw.shape[0]))[0]
 
 
 # Optional gradient checking
@@ -150,12 +141,11 @@ def grad_check(x_input, y_input):
     X.set_input(x_input)
     y.set_input(y_input)
     Loss.reset()
-    Loss.fire()
-    Loss.backfire()
-    oldW = copy.copy(W)
     for flat_idx in [0, 1]:
-        old, actual_grad = oldW.get_values_from_flat(flat_idx)
         print('Checking gradient for', W.name, flat_idx, 'parameter.')
+        Loss.fire()
+        Loss.backfire()
+        old, actual_grad = W.get_values_from_flat(flat_idx)
         Loss.reset()
         W.set_value_from_flat(old + h, flat_idx)
         Jplus = Loss.fire()
@@ -184,7 +174,7 @@ def train_step(x_input, y_input):
     # print('y', y.value)
     # print('W', W.value)
     # print('XW', XW.value)
-    print('Loss', Loss.value)
+    # print('Loss', Loss.value)
     # print()
 
     # print('X', X.shape)
@@ -196,7 +186,7 @@ def train_step(x_input, y_input):
 
     Loss.backfire()
     # print('W', W.get_values_from_flat(1))
-    W.update({'alpha': 0.0001})
+    W.update({'alpha': 0.0000001})
 
 
 # Additional vars (for drawing and such)
@@ -274,9 +264,6 @@ def main():
         if should_retrain:
             current_epoch = 0
             should_retrain = False
-            # Renormalize the data
-            x_mean, x_std = np.mean(x_train), np.std(x_train)
-            y_mean, y_std = np.mean(y_train), np.std(y_train)
 
         # DRAW USING PYGAME COMMANDS ————
         # Draw training points
@@ -297,7 +284,6 @@ def main():
         # Handle keys + mouse
         keys_pressed = pygame.key.get_pressed()
         handle_keys(keys_pressed)
-
 
         # Send the pygame surface over to our shaders for post-processing
         # (1) Send the surface as a uniform called 'tex'
