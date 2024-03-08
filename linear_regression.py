@@ -80,9 +80,13 @@ def A_many(vals):
 # THE ACTUAL CODE STARTS HERE —————————————————————————————————————————————————————————————————————————————————
 # Training data (raw, not normalized)
 # x_train, y_train = [0., 100., 300., -50.], [0., 100., 200., -40]
-x_train, y_train = [0., 100., 200., -50.], [50., 150., 250., 0.]
-# x_train = list(np.linspace(0, 99, 100))
-# y_train = [x + 200 for x in x_train]  # Since y = x + 50
+# x_train, y_train = [0., 100., 200., -50.], [50., 150., 250., 0.]
+x_train = list(np.linspace(0, 99, 100))
+y_train = [x + 200 for x in x_train]  # Since y = x + 50
+
+# Data normalization parameters (need to use the same ones at test time)
+x_mean, x_std = np.mean(x_train), np.std(x_train)
+y_mean, y_std = np.mean(y_train), np.std(y_train)
 
 # Build computation graph (TensorNode, TensorNode(learnable)) --> Multiplication Node --> SquaredLossNode <-- TensorNode
 # Create the nodes (for homoskedastic linear regression, for now)
@@ -106,28 +110,29 @@ current_epoch = 0  # we'll increment by 1 before current the first epoch
 
 # Preprocessing
 def preprocess(x_raw=None, y_raw=None):
+    global x_mean, x_std, y_mean, y_std
     assert x_raw is not None or y_raw is not None, 'what do u even want me to preprocess, fool?'
     x_input, y_input = None, None
     if x_raw is not None:
         x_raw = np.array(x_raw)
-        # x_input = (x_raw - np.mean(x_raw)) / np.std(x_raw)
-        x_input = x_raw
+        x_input = (x_raw - x_mean) / x_std
+        # x_input = x_raw
         x_input = np.reshape(x_input, (len(x_input), 1))
-        x_input = np.hstack((x_input, 100 * np.ones((len(x_raw), 1))))  # bias trick
+        x_input = np.hstack((x_input, 1 * np.ones((len(x_raw), 1))))  # bias trick
     if y_raw is not None:
-        # y_input = (y_raw - np.mean(y_raw)) / np.std(y_raw)
-        # y_input = np.reshape(y_input, (len(y_raw), 1))
-        y_input = np.reshape(y_raw, (len(y_raw), 1))
+        y_input = (y_raw - y_mean) / y_std
+        y_input = np.reshape(y_input, (len(y_raw), 1))
+        # y_input = np.reshape(y_raw, (len(y_raw), 1))
 
     return x_input, y_input
 
 
 # Postprocessing of the output
 def postprocess(y_raw):
-    return np.reshape(y_raw, (1, y_raw.shape[0]))[0]
-    # global y_train  # very sloppy implementation, but bare with me
-    # y_output = np.reshape(y_raw, (1, y_raw.shape[0]))[0]
-    # return (y_output * np.std(y_train)) + np.mean(y_train)
+    # return np.reshape(y_raw, (1, y_raw.shape[0]))[0]
+    global y_mean, y_std  # very sloppy implementation, but bare with me
+    y_output = np.reshape(y_raw, (1, y_raw.shape[0]))[0]
+    return (y_output * y_std) + y_mean
 
 
 # Optional gradient checking
@@ -181,7 +186,7 @@ def train_step(x_input, y_input):
 
     Loss.backfire()
     # print('W', W.get_values_from_flat(1))
-    W.update({'alpha': 0.000001})
+    W.update({'alpha': 0.0001})
 
 
 # Additional vars (for drawing and such)
