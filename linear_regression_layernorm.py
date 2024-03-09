@@ -17,6 +17,12 @@
 # the weights can simply absorb that. There's probably a good reason, like maybe the MLP
 # should only be focused on "thinking" on the semantics of the output of the attention,
 # not be bothered with rescaling. Who knows? Probably Mr. Karpathy does.
+#
+#
+#  Update: See computation_graph.py note. TDLR: Screw layernorm layer, for now.
+#          Just use non-diffable batch-normalization for now.
+#
+#  The other points of this file: (1) Polybasis (2) Heteroskedastic (3) Regularization
 
 import moderngl
 import numpy as np
@@ -141,11 +147,12 @@ def grad_check(x_input, y_input):
     X.set_input(x_input)
     y.set_input(y_input)
     Loss.reset()
+    Loss.fire()
+    Loss.backfire()
+    oldW = copy.copy(W)
     for flat_idx in [0, 1]:
+        old, actual_grad = oldW.get_values_from_flat(flat_idx)
         print('Checking gradient for', W.name, flat_idx, 'parameter.')
-        Loss.fire()
-        Loss.backfire()
-        old, actual_grad = W.get_values_from_flat(flat_idx)
         Loss.reset()
         W.set_value_from_flat(old + h, flat_idx)
         Jplus = Loss.fire()

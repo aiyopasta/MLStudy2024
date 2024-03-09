@@ -114,8 +114,8 @@ class TensorNode:
 # A node representing multiplication between two tensors  TODO: Extend to arbitrary dimension
 class MultiplicationNode:
     def __init__(self, tensor1, tensor2, name='multiplication'):
-        assert len(tensor1.value.shape) == len(tensor2.value.shape) == 2, 'multiplication has not been implemented for >2 tensors!'
-        assert tensor1.value.shape[1] == tensor2.value.shape[0], 'input shapes don\'t match!'
+        assert len(tensor1.shape) == len(tensor2.shape) == 2, 'multiplication has not been implemented for >2 tensors!'
+        assert tensor1.shape[1] == tensor2.shape[0], 'input shapes don\'t match!'
         self.left_tensor, self.right_tensor = tensor1, tensor2  # called 'left' & 'right' as order matters
         self.children = []  # add children from outside
         self.parents = [tensor1, tensor2]
@@ -130,8 +130,8 @@ class MultiplicationNode:
     def reset(self, hard=False):
         self.__reset_shape__()
         self.has_cached = False  # this will allow self.value to be overwritten automatically
-        self.gradients = {self.left_tensor: np.zeros(self.left_tensor.value.shape),
-                          self.right_tensor: np.zeros(self.right_tensor.value.shape)}
+        self.gradients = {self.left_tensor: np.zeros(self.left_tensor.shape),
+                          self.right_tensor: np.zeros(self.right_tensor.shape)}
         for parent in self.parents: parent.reset(hard)  # clean parents, recursively
 
     def __reset_shape__(self):
@@ -207,13 +207,14 @@ class AdditionNode:
 # For heteroskedastic regression, where we output the std: <TODO: fill in>
 class SquaredLossNode:
     def __init__(self, mu, y, std=None, name='squared_loss'):
+        self.parents = [mu, y]
         assert mu.shape == y.shape, 'mu & y shapes don\'t match!'
         if std is not None:
             assert std.shape == mu.shape, 'std shape doesn\'t match!'
             self.std = std
+            self.parents.append(std)
 
         self.mu, self.y = mu, y
-        self.parents = [mu, y]
         mu.children.append(self)
         y.children.append(self)
         self.children = []  # add from outside. loss node can have children, like addition nodes, for adding losses
@@ -261,11 +262,82 @@ class SquaredLossNode:
     def __call__(self, *args, **kwargs):
         return self.fire()
 
-# LayerNorm node
-# (use it at the beginning of an MLP to not worry about rescaling features, or use in a transformer)
-class LayerNormNode:
-    def __init__(self, tensor, gamma, beta):
-        pass
+
+# TODO: Note, regarding layernorm
+#      (1) I'll abandon this for now, because the derivative expression for this is very tricky, but I think if I
+#          spend a day at it, hammering away, and splitting the expression into smaller computation graph chunks,
+#          I'll get it.
+#      (2) For my MLP & regression applications: Like the clickable regression demos, Tensorflow playground,
+#          and even MNIST, there are already reasonable normalizations you can apply to bring the input's
+#          statistics very close to 1, the bias input.
+
+# # LayerNorm node
+# # (use it at the beginning of an MLP so don't need to worry about rescaling features)
+# # (or use it in a transformer architecture)
+# class LayerNormNode:
+#     def __init__(self, tensor, gamma=None, beta=None, name='layernorm'):
+#         ''' this layer eats a mini-batch and rescales each individual example: (i) first to 0 mean
+#             and unit variance, and (ii) second, optionally, to a learned scaling gamma and learned offset.
+#         '''
+#         assert len(tensor.shape) == 2, 'layernorm hasn\'t been implemented for >2 tensors!'
+#         self.parents = [tensor]
+#         if gamma is not None:
+#             assert gamma.shape[0] == tensor.shape[0], 'gamma\'s shape does not match!'
+#             assert gamma.shape[1] == 1, 'gamma must have 1 column!'
+#             self.gamma = gamma
+#             self.parents.append(gamma)
+#         if beta is not None:
+#             assert beta.shape[0] == tensor.shape[0], 'gamma\'s shape does not match!'
+#             assert beta.shape[1] == 1, 'beta must have 1 column!'
+#             self.beta = beta
+#             self.parents.append(beta)
+#
+#         self.tensor = tensor
+#         tensor.children.append(self)
+#         gamma.children.append(self)
+#         beta.children.append(self)
+#         self.children = []  # add from outside
+#
+#         self.value, self.gradients, self.has_cached, self.shape = None, None, None, None  # good practice to initialize in constructor
+#         self.reset()
+#
+#         self.name = name
+#
+#     def reset(self, hard=False):
+#         self.__reset_shape__()
+#         self.has_cached = False  # this will allow self.value to be overwritten automatically
+#         self.gradients = {self.tensor: np.zeros(self.tensor.shape)}  # recall gradient should be able to flow through tensor too! (e.g. in a transformer)
+#         if hasattr(self, 'gamma'): self.gradients[self.gamma] = np.zeros(self.gamma.shape)
+#         if hasattr(self, 'beta'): self.gradients[self.beta] = np.zeros(self.beta.shape)
+#         for parent in self.parents: parent.reset(hard)  # clean parents, recursively
+#
+#     def __reset_shape__(self):
+#         for parent in self.parents: parent.__reset_shape__()  # set the shape of the parents first
+#         self.shape = self.tensor.shape  # the output is still just the original mini-batch, just with different scaling
+#
+#     def fire(self):
+#         # If we haven't already computed this, compute it. Otherwise use cached.
+#         if not self.has_cached:
+#             mu, std = np.mean(self.tensor, axis=1).reshape(-1, 1), np.std(self.tensor, axis=1).reshape(-1, 1)
+#             self.value = (self.tensor - mu) / std
+#             if hasattr(self, 'gamma'): self.value *= self.gamma
+#             if hasattr(self, 'beta'): self.value += self.beta
+#         elif print_fired: print('<used cached> ', end='')
+#         self.has_cached = True
+#         if print_fired: print(self.name, 'was fired.')
+#         return self.value
+#
+#     def backfire(self, from_child):
+#         assert from_child in self.children, 'not a valid child of this node!'
+#         assert hasattr(from_child, 'gradients')
+#         child_gradient = from_child.gradient[self]  # TODO what'll be the dimension here?
+#         self.gradients[self.tensor] +=  * child_gradient  # TODO
+#         if hasattr(self, 'gamma'): self.gradients[self.std] +=  * child_gradient  # TODO
+#         if hasattr(self, 'beta'): self.gradients[self.std] += *child_gradient  # TODO
+#         for parent in self.parents: parent.backfire(self)
+#
+#     def __call__(self, *args, **kwargs):
+#         return self.fire()
 
 
 
@@ -281,27 +353,86 @@ class CrossEntropyLossNode:
         pass
 
 
-# Activation function nodes
-class LogisticSigmoidNode:
-    def __init__(self):
-        pass
+# Component-wise Activation function node
+class SimpleActivationNode:
+    def __init__(self, tensor, kind: str, name='none'):
+        activations = {'sigmoid': sigmoid, 'tanh': tanh, 'softplus': softplus, 'relu': relu}
+        activations_prime = {'sigmoid': sigmoid_prime, 'tanh': tanh_prime, 'softplus': softplus_prime, 'relu': relu_prime}
+        assert str not in activations.keys(), 'not a valid component-wise activation function!'
+        self.parents = [tensor]
+        self.tensor = tensor
+        self.actfn = activations[kind]
+        self.actfn_prime = activations_prime[kind]
+        tensor.children.append(self)
+        self.children = []  # add from outside
+
+        self.value, self.gradients, self.has_cached, self.shape = None, None, None, None  # good practice to initialize in constructor
+        self.reset()
+
+        self.name = name if name != 'none' else kind + ' activation'
+
+    def reset(self, hard=False):
+        self.__reset_shape__()
+        self.has_cached = False  # this will allow self.value to be overwritten automatically
+        self.gradients = {self.tensor: np.zeros(self.tensor.shape)}
+        for parent in self.parents: parent.reset(hard)  # clean parents, recursively
+
+    def __reset_shape__(self):
+        for parent in self.parents: parent.__reset_shape__()  # set the shape of the parents first
+        self.shape = self.tensor.shape
+
+    def fire(self):
+        # If we haven't already computed this, compute it. Otherwise use cached.
+        if not self.has_cached: self.value = self.actfn(self.tensor())
+        elif print_fired: print('<used cached> ', end='')
+        self.has_cached = True
+        if print_fired: print(self.name, 'was fired.')
+        return self.value
+
+    def backfire(self, from_child):
+        assert from_child in self.children, 'not a valid child of this node!'
+        assert hasattr(from_child, 'gradients')
+        self.gradients[self.tensor] += from_child.gradients[self] * self.actfn_prime(self.tensor())
+        for parent in self.parents: parent.backfire(self)
+
+    def __call__(self, *args, **kwargs):
+        return self.fire()
 
 
-class TanhNode:
-    def __init__(self):
-        pass
+def sigmoid(tau):
+    return 1.0 / (1.0 + np.exp(-tau))
 
 
+def sigmoid_prime(tau):
+    sig = sigmoid(tau)
+    return sig * (1.0 - sig)
+
+
+def tanh(tau):
+    return np.tanh(tau)
+
+
+def tanh_prime(tau):
+    return 1.0 - np.power(np.tanh(tau), 2.0)
+
+
+def softplus(tau):
+    return np.log(1.0 + np.exp(tau))
+
+
+def softplus_prime(tau):
+    return sigmoid(tau)
+
+
+def relu(tau):
+    return np.maximum(0.0, tau)
+
+
+def relu_prime(tau):
+    return np.where(tau > 0.0, 1.0, 0.0)  # wherever tau > 0, set 1.0 else 0.0
+
+
+# This is its own beast
 class SoftmaxNode:
-    def __init__(self):
-        pass
-
-
-class ReLUNode:
-    def __init__(self):
-        pass
-
-
-class SoftplusNode:
     def __init__(self):
         pass
