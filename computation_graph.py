@@ -345,15 +345,9 @@ class SquaredLossNode:
 class RegularizationLossNode:
     def __init__(self, ):
         pass
-    
-
-# Cross-entropy loss
-class CrossEntropyLossNode:
-    def __init__(self):
-        pass
 
 
-# Component-wise Activation function node
+# Component-wise activation function node
 class SimpleActivationNode:
     def __init__(self, tensor, kind: str, name='none'):
         activations = {'sigmoid': sigmoid, 'tanh': tanh, 'softplus': softplus, 'relu': relu}
@@ -399,6 +393,101 @@ class SimpleActivationNode:
         return self.fire()
 
 
+# Softmax activation node
+class SoftmaxNode:
+    def __init__(self, tensor, name='softmax activation'):
+        self.parents = [tensor]
+        self.tensor = tensor
+        tensor.children.append(self)
+        self.children = []  # add from outside
+
+        self.value, self.gradients, self.has_cached, self.shape = None, None, None, None  # good practice to initialize in constructor
+        self.reset()
+
+        self.name = name
+
+    def reset(self, hard=False):
+        self.__reset_shape__()
+        self.has_cached = False  # this will allow self.value to be overwritten automatically
+        self.gradients = {self.tensor: np.zeros(self.tensor.shape)}
+        for parent in self.parents: parent.reset(hard)  # clean parents, recursively
+
+    def __reset_shape__(self):
+        for parent in self.parents: parent.__reset_shape__()  # set the shape of the parents first
+        self.shape = self.tensor.shape
+
+    def fire(self):
+        # If we haven't already computed this, compute it. Otherwise use cached.
+        if not self.has_cached: self.value = softmax(self.tensor())
+        elif print_fired: print('<used cached> ', end='')
+        self.has_cached = True
+        if print_fired: print(self.name, 'was fired.')
+        return self.value
+
+    def backfire(self, from_child):
+        assert from_child in self.children, 'not a valid child of this node!'
+        assert hasattr(from_child, 'gradients')
+        S = self()
+        dLdS = from_child.gradients[self]
+        self.gradients[self.tensor] += S * (dLdS - (dLdS * S).sum(axis=1, keepdims=True))
+        for parent in self.parents: parent.backfire(self)
+
+    def __call__(self, *args, **kwargs):
+        return self.fire()
+
+
+# Cross-entropy loss node
+class CrossEntropyLossNode:
+    def __init__(self, probs, y_labels, name='cross-entropy loss'):
+        assert y_labels.shape[1] == 1, 'each row of y_labels must have 1 entry, the label index!'
+        self.parents = [probs, y_labels]
+        self.probs = probs
+        self.y_labels = y_labels
+        self.probs.children.append(self)
+        self.y_labels.children.append(self)
+        self.children = []  # add from outside
+
+        self.value, self.gradients, self.has_cached, self.shape = None, None, None, None  # good practice to initialize in constructor
+        self.reset()
+
+        self.name = name
+
+    def reset(self, hard=False):
+        self.__reset_shape__()
+        self.has_cached = False  # this will allow self.value to be overwritten automatically
+        self.gradients = {self.probs: np.zeros(self.probs.shape)}  # labels have no gradient
+        for parent in self.parents: parent.reset(hard)  # clean parents, recursively
+
+    def __reset_shape__(self):
+        for parent in self.parents: parent.__reset_shape__()  # set the shape of the parents first
+        self.shape = (1, 1)
+
+    def fire(self):
+        # If we haven't already computed this, compute it. Otherwise use cached.
+        p_mat, y = self.probs(), self.y_labels()
+        if not self.has_cached: self.value = -sum(np.log(p_mat[np.arange(p_mat.shape[0]), y.flatten()].reshape(-1, 1)))
+        elif print_fired: print('<used cached> ', end='')
+        self.has_cached = True
+        if print_fired: print(self.name, 'was fired.')
+        return self.value
+
+    def backfire(self, from_child=None):
+        assert from_child is None or from_child in self.children, 'not a valid child of this node!'
+        assert hasattr(from_child, 'gradients') or from_child is None
+        child_gradient = from_child.gradient[self] if from_child is not None else 1.  # note that it will be a real number!
+        p_mat, y = self.probs(), self.y_labels()
+        grad = np.zeros_like(p_mat)
+        row_idxs = np.arange(p_mat.shape[0])
+        y_flat = y.flatten()
+        grad[row_idxs, y_flat] = -1.0 / p_mat[row_idxs, y_flat]
+        self.gradients[self.probs] += child_gradient * grad
+        for parent in self.parents: parent.backfire(self)
+
+    def __call__(self, *args, **kwargs):
+        return self.fire()
+
+
+# Simple R --> R functions to call
 def sigmoid(tau):
     return 1.0 / (1.0 + np.exp(-tau))
 
@@ -432,7 +521,21 @@ def relu_prime(tau):
     return np.where(tau > 0.0, 1.0, 0.0)  # wherever tau > 0, set 1.0 else 0.0
 
 
-# This is its own beast
-class SoftmaxNode:
-    def __init__(self):
-        pass
+def softmax(Tau: np.array):
+    assert len(Tau.shape) == 2, 'input must be a matrix!'
+    exp = np.exp(Tau)
+    return exp / exp.sum(axis=1, keepdims=True)  # the sum results in a column vector, and '/' divides each row in exp by correponding element
+
+
+# Single value softmax
+# def softmax(i, tau: np.ndarray):
+#     assert 0 <= i < len(tau)
+#     return np.exp(tau[i]) / sum([np.exp(xj) for xj in tau])
+
+# Single value softmax prime. For the general, matrix-based softmax, its derivative is given right in the backfire method.
+# def softmax_prime(i, j, tau: np.ndarray):
+#     ''' i, j are such that xi is in numerator, xj is what derivative is wrt '''
+#     assert 0 <= i < len(tau) and 0 <= j < len(tau)
+#     soft = softmax(i, tau)
+#     dii = soft * (1.0 - soft)
+#     return dii if i==j else -dii
