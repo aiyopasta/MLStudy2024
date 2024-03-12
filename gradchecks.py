@@ -9,9 +9,9 @@ n_hidden = 10
 n_outputs = 1
 
 # Training data (raw, not normalized)
-# x_train = list(np.linspace(-100.0, 100.0, 100))  # TODO: change back to 100
-x_train = np.random.rand(3, 5)
-y_train = [-0.5 * x - 100 + np.random.randint(-100, 100) for x in range(x_train.shape[0])]  # for regression problems
+x_train = list(np.linspace(-100.0, 100.0, 100))  # TODO: change back to 100
+# x_train = np.random.rand(3, 5)
+y_train = [-0.5 * x - 100 + np.random.randint(-100, 100) for x in range(len(x_train))]  # for regression problems
 # y_train = np.random.randint(0, n_outputs, np.shape(x_train)[0])
 
 # X = TensorNode(learnable=False, shape=(len(x_train), 2), name='X_data')  # one extra feature for bias term
@@ -41,10 +41,10 @@ y_train = [-0.5 * x - 100 + np.random.randint(-100, 100) for x in range(x_train.
 # # List of all nodes, for convenience
 # node_list = [X, X_normed, y, W, XW, soft, Loss]
 
-X = TensorNode(learnable=True, shape=(len(x_train), 5), name='X_data')  # 5 total features
+X = TensorNode(learnable=True, shape=(len(x_train), 2), name='X_data')
 X_normed = LayerNormNode(X)
 y = TensorNode(learnable=False, shape=(len(y_train), 1), name='y_labels')
-W = TensorNode(learnable=True, shape=(5, n_outputs), name='Weights-Layer-1')  # 5 weights, 1 output
+W = TensorNode(learnable=True, shape=(2, n_outputs), name='Weights-Layer-1')  # 5 weights, 1 output
 XW = MultiplicationNode(X_normed, W)
 Loss = SquaredLossNode(XW, y)
 # List of all nodes, for convenience
@@ -55,13 +55,13 @@ W.set_input(np.random.rand(*W.shape))
 # W2.set_input(np.random.rand(*W2.shape))
 
 # Preprocess input
-# x_raw = np.array(x_train)
-# x_input = np.reshape(x_raw, (len(x_raw), 1))
-# x_input = np.hstack((x_input, 40.0 * np.ones((len(x_raw), 1))))  # bias trick TODO change back to 1
+x_raw = np.array(x_train)
+x_input = np.reshape(x_raw, (len(x_raw), 1))
+x_input = np.hstack((x_input, 1 * np.ones((len(x_raw), 1))))  # bias trick TODO change back to 1
 y_input = np.reshape(y_train, (len(y_train), 1))
 
 # Set the inputs
-X.set_input(x_train)
+X.set_input(x_input)
 y.set_input(y_input)
 
 # The gradient check
@@ -69,8 +69,8 @@ h = 1e-5
 for param in [X]:
     Loss.reset()
     Loss.fire()
-    # print(X)
-    # print(X_normed)
+    print(X)
+    print(X_normed)
     # print(W)
     # print(XW.value)
     Loss.backfire()

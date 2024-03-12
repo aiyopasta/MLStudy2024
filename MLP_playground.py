@@ -1,29 +1,7 @@
-# The same linear regression algorithm, but with a slight modification: Layer-norm.
-# Previously, I was normalizing the inputs in a "batchnorm" type of way; i.e. over the
-# entire training set (because here, the batches I'm using is simply the whole set).
-# But this is not what we actually want; we want the FEATURES of an INDIVIDUAL data point
-# to be within the same scope of each-other (e.g. in vanilla linreg, x should be on the
-# same order of 1, the bias feature). The batch-norm type thing I was doing earlier worked
-# well simply because I was choosing a mean of 0, std of 1 across all the batches. But this
-# is not ideal, especially since I'm planning on implementing more than just 2 features, i.e.
-# I'm gonna implement features like x^2, x^3, ... x^{arbitrary degree}. We truly just want
-# each FEATURE to be in the same scope, not the examples.
+# A Tensorflow-playground styled visualization of multilayer perceptron learning
+# in real-time. There's a visualizer for the live decision boundary, as well as a visual
+# of the opposing POV, where the input space is warped to make the data linearly separable.
 #
-#
-# This is typically done with a layer-norm layer in the computation graph, with 2 learnable
-# parameters gamma and beta, which are the same dimension as the # of features. To be honest,
-# I don't fully understand why it's necessarily a good idea to include gamma, as the layer
-# afterwards (even in some parts of the transformer) is just a linear layer of an MLP, so
-# the weights can simply absorb that. There's probably a good reason, like maybe the MLP
-# should only be focused on "thinking" on the semantics of the output of the attention,
-# not be bothered with rescaling. Who knows? Probably Mr. Karpathy does.
-#
-#
-#  Update: See computation_graph.py note. TDLR: Screw layernorm layer, for now.
-#          Just use non-diffable batch-normalization for now.
-#
-#  The other points of this file: (1) Polybasis (2) Heteroskedastic (3) Regularization
-
 import moderngl
 import numpy as np
 import pygame
@@ -92,32 +70,50 @@ def A_many(vals):
 
 
 # THE ACTUAL CODE STARTS HERE —————————————————————————————————————————————————————————————————————————————————
-def polybasis(raw, degree=1.):
-    ''' raw: input training/testing data (raw, un-normalized) in the form [x1, x2, ..., xm] for m points
-        returns: [[x1^0=1, x1^1, x1^2, x1^3, ..., x1^degree]]
-    '''
-
-
 # Training data (raw, not normalized)
-x_train = list(np.linspace(-width/2, width/2, 100))
-y_train = [-0.5 * x - 100 + np.random.randint(-100, 100) for x in x_train]
+max_radius = height / 3.
+cutoff = max_radius * 0.6
+n_examples = 100
+x_train, y_train = [], []
+for i in range(n_examples):
+    r = max_radius * np.sqrt(np.random.random())
+    theta = np.random.random() * 2.0 * np.pi
+    x_train.append(r * np.array([np.cos(theta), np.sin(theta)]))
+    y_train.append(0 if r < cutoff else 1)  # 0 = inside class, 1 = outside class
 
-# Polynomial degree
-degree = 1
-
-# Build computation graph (TensorNode, TensorNode(learnable)) --> Multiplication Node --> SquaredLossNode <-- TensorNode
-# Create the nodes (for homoskedastic linear regression, for now)
-X = TensorNode(learnable=False, shape=(len(x_train), degree + 1), name='X_data')  # + 1 bias term (i.e. for degree=5: ax^5 + bx^4 + cx^3 + dx^2 + ex + bias)
+# Build computation graph (TODO: add functionality for many more hidden layers, neurons, and classes)
+n_hidden = 3  # number of neurons in single (for now) hidden layer
+n_outputs = 2  # 2 classes
+# note: read "W_b" as "W and b", 'b' for bias vector. and 'XW_b" as 'XW+b", where b is the bias vector included in W.
+X = BiasTrickNode(TensorNode(learnable=False, shape=(len(x_train), 2), name='X_data'))  # (x1, x2) + 1 bias
 X_normed = LayerNormNode(X)
 y = TensorNode(learnable=False, shape=(len(y_train), 1), name='y_labels')
-W = TensorNode(learnable=True, shape=(degree + 1, 1), name='Weights')  # 1 weight + 1 bias
-XW = MultiplicationNode(X_normed, W)
-Loss = SquaredLossNode(mu=XW, y=y)
+W_b = TensorNode(learnable=True, shape=(3, n_hidden), name='WeightsBias-Layer-1')  # 3 weights per hidden neuron (for x1, x2, and bias)
+XW_b = MultiplicationNode(X_normed, W_b)
+Z = BiasTrickNode(SimpleActivationNode(XW_b, kind='sigmoid'))
+W2_b = TensorNode(learnable=True, shape=(n_hidden + 1, n_outputs), name='WeightsBias-Layer-2')  # num of hidden neurons + bias
+ZW_b = MultiplicationNode(Z, W2_b)
+Soft = SoftmaxNode(ZW_b)
+Loss = CrossEntropyLossNode(Soft, y)
 # List of all nodes, for convenience
-node_list = [X, X_normed, y, W, XW, Loss]
+node_list = [X, X_normed, y, W_b, XW_b, Z, W2_b, ZW_b, Soft, Loss]
 
-# Initialize weights & biases for training. TODO: Finish (don't set W=0)
-W.value[5, 0] = 0.01
+# Training accuracy (percentage correctly classified)
+accuracy = 0.0
+
+# Initialize weights & biases for training. TODO: Initialize weights properly (don't set W=0)
+# (1) For biases, initialize with 0.01, which is recommended
+for h_ in range(n_hidden): W_b.value[W_b.shape[0]-1, h_] = 0.01
+for o_ in range(n_outputs): W2_b.value[W2_b.shape[0]-1, o_] = 0.01
+# (2) For weights, use Glorot initialization (assuming activation function is sigmoid or tanh!)
+assert Z.parents[0].actfn in [sigmoid, tanh], 'Glorot initialization won\'t work for non-symmetric actfns!'
+for param in [W_b, W2_b]:
+    a = np.sqrt(6.0 / (param.shape[0] + param.shape[1]))
+    param.value[:-1, :] = np.random.uniform(-a, a, size=(param.shape[0]-1, param.shape[1]))
+
+# print(W_b.value)
+# print()
+# print()
 
 # Training parameters
 h = 1e-5  # for gradient checking
@@ -132,8 +128,8 @@ def preprocess(x_raw=None, y_raw=None):
     x_input, y_input = None, None
     if x_raw is not None:
         x_raw = np.array(x_raw)
-        x_input = np.reshape(x_raw, (x_raw.shape[1], 1))  # TODO (finish this, handle all degree cases. maybe call polybasis from inside here too)
-        x_input = np.hstack((x_input, 1 * np.ones((len(x_raw), 1))))  # bias trick
+        x_input = x_raw
+        # x_input = np.hstack((x_raw, 1 * np.ones((len(x_raw), 1))))  # bias trick  TODO: Note: The bias trick will now be implemented through a separate node
     if y_raw is not None:
         y_input = np.reshape(y_raw, (len(y_raw), 1))
 
@@ -142,41 +138,47 @@ def preprocess(x_raw=None, y_raw=None):
 
 # Postprocessing of the output
 def postprocess(y_raw):
-    return np.reshape(y_raw, (1, y_raw.shape[0]))[0]
+    pass  # TODO
 
 
 # Optional gradient checking
 def grad_check(x_input, y_input):
-    global X, y, Loss, W, XW, h
+    global X, X_normed, y, W_b, XW_b, Z, W2_b, ZW_b, Soft, Loss, h
     X.set_input(x_input)
     y.set_input(y_input)
-    Loss.reset()
-    Loss.fire()
-    Loss.backfire()
-    oldW = copy.copy(W)
-    for flat_idx in [0, 1]:
-        old, actual_grad = oldW.get_values_from_flat(flat_idx)
-        print('Checking gradient for', W.name, flat_idx, 'parameter.')
+    for param in [W_b, W2_b]:
         Loss.reset()
-        W.set_value_from_flat(old + h, flat_idx)
-        Jplus = Loss.fire()
-        Loss.reset()
-        W.set_value_from_flat(old - h, flat_idx)
-        Jminus = Loss.fire()
-        Loss.reset()
-        numerical_grad = ((Jplus - Jminus) / (2 * h))[0]
-        W.set_value_from_flat(old, flat_idx)
-        # print('Jplus:', Jplus, 'Jminus:', Jminus)
-        print('Actual:', actual_grad)
-        print('Numerical:', numerical_grad)  # TODO: Implement a legit comparison, e.g. relative error.
-        rel_error = abs(actual_grad - numerical_grad) / max(abs(actual_grad), abs(numerical_grad))
-        print('Relative error between the two:', rel_error)
-        print()
+        Loss.fire()
+        Loss.backfire()
+        # print(ZW_b.gradients[Z])  # TODO: Maybe it's cuz the weights aren't being initialized properly
+        # print()
+        # print()
+
+
+        old_param = copy.copy(param)
+        for flat_idx in [0, 1, 2]:
+            old, actual_grad = old_param.get_values_from_flat(flat_idx)
+            print('Checking gradient for', param.name, flat_idx, 'parameter.')
+            Loss.reset()
+            param.set_value_from_flat(old + h, flat_idx)
+            Jplus = Loss.fire()
+            Loss.reset()
+            param.set_value_from_flat(old - h, flat_idx)
+            Jminus = Loss.fire()
+            Loss.reset()
+            numerical_grad = ((Jplus - Jminus) / (2 * h))[0]
+            param.set_value_from_flat(old, flat_idx)
+            # print('Jplus:', Jplus, 'Jminus:', Jminus)
+            print('Actual:', actual_grad)
+            print('Numerical:', numerical_grad)
+            rel_error = abs(actual_grad - numerical_grad) / max(abs(actual_grad), abs(numerical_grad))
+            print('Relative error between the two:', rel_error)
+            print()
 
 
 # One step of training
 def train_step(x_input, y_input):
-    global X, y, Loss, W, XW
+    global X, X_normed, y, W_b, XW_b, Z, W2_b, ZW_b, Soft, Loss, accuracy
     X.set_input(x_input)  # In real ML problems, we'd iterate over mini-batches and set X's value to each mini-batch's value. 1 epoch = all mini-batches done.
     y.set_input(y_input)
     Loss.reset()
@@ -195,9 +197,14 @@ def train_step(x_input, y_input):
     # print('Loss', Loss.shape)
     # print()
 
+    # Calculate training accuracy
+    incorrect = abs(np.argmax(Soft.value, axis=1, keepdims=True) - y_input)
+    accuracy = (1.0 - (sum(incorrect) / len(x_train)))[0]
+    # Update weights
     Loss.backfire()
-    # print('W', W.get_values_from_flat(1))
-    W.update({'alpha': 0.0000001})
+    for param in [W_b, W2_b]:
+        param.update({'alpha': 0.001})
+
 
 
 # Additional vars (for drawing and such)
@@ -227,19 +234,19 @@ def handle_mouse(event):
     # Either add a new point or select existing one for dragging
     if drag_idx == -1:
         pos = A_inv(pygame.mouse.get_pos())
-        is_selecting = [np.linalg.norm(pos - np.array([x,y])) < point_radius for x,y in zip(x_train, y_train)]
+        is_selecting = [np.linalg.norm(pos - x_) < point_radius for x_, y_ in zip(x_train, y_train)]
         if np.any(is_selecting): drag_idx = is_selecting.index(True)
         else:
-            x_train.append(pos[0])
-            y_train.append(pos[1])
-            should_retrain = True
+            # x_train.append(pos[0])
+            # y_train.append(pos[1])
+            # should_retrain = True
+            pass  # TODO add ability to add new points, of any desired color!
     # Stop tracking the dragging point
     else: drag_idx = -1
 
 
 def main():
-    global prev_mouse_pos, point_radius, n_samples, should_retrain, current_epoch, max_epochs,\
-        X, y, W, XW, Loss, x_train, y_train, x_mean, x_std, y_mean, y_std
+    global prev_mouse_pos, point_radius, n_samples, should_retrain, current_epoch, max_epochs, x_train, y_train, Loss, accuracy
 
     # Pre-gameloop stuff
     run = True
@@ -249,13 +256,13 @@ def main():
     count = 0
     while run:
         # Reset stuff
-        screen.fill((0, 0, 0, 1.0))  # make background black + transparent (TODO: hmm... making it transparent messes with text that is blit to the screen)
+        screen.fill((0, 0, 0, 0.0))  # make background black + transparent (TODO: hmm... making it transparent messes with text that is blit to the screen)
 
         # UPDATE MODEL / DATA ————
         # Move point being dragged to mouse location. If it's a new drag location, need to restart training.
         mouse_pos = A_inv(pygame.mouse.get_pos())
         if drag_idx != -1:
-            x_train[drag_idx], y_train[drag_idx] = tuple(mouse_pos)
+            x_train[drag_idx] = np.array(mouse_pos)
             should_retrain = should_retrain or np.linalg.norm(prev_mouse_pos - mouse_pos) > 1e-10
         # Set this mouse position to the old one
         prev_mouse_pos = mouse_pos
@@ -270,6 +277,7 @@ def main():
         if current_epoch <= max_epochs:
             current_epoch += 1
             train_step(x_input, y_input)
+            # break
 
         # Essentially more epochs to the training if the data has changed
         if should_retrain:
@@ -279,18 +287,13 @@ def main():
         # DRAW USING PYGAME COMMANDS ————
         # Draw training points
         for x_, y_ in zip(x_train, y_train):
-            pygame.draw.circle(screen, colors['white'], A([x_,y_]), radius=point_radius, width=0)
-
-        # Draw learned curve
-        x_test = np.linspace(-width/2, width/2, n_samples)
-        x_input, _ = preprocess(x_raw=x_test)
-        y_output = postprocess(x_input @ W.value)
-        pts = [np.array([x_, y_]) for x_, y_ in zip(x_test, y_output)]
-        pygame.draw.lines(screen, colors['red'], False, A_many(pts), width=2)
+            col = colors['red'] if y_ == 0 else colors['blue']
+            pygame.draw.circle(screen, col, A(x_), radius=point_radius, width=0)
 
         # Draw training epochs
-        text = font.render('Epoch: '+str(min(current_epoch, max_epochs))+'/'+str(max_epochs), True, colors['red'])
-        screen.blit(text, (width/2 - 120, 40))
+        # text = font.render('Epoch: '+str(min(current_epoch, max_epochs))+'/'+str(max_epochs), True, colors['red'])
+        # screen.blit(text, (width/2 - 120, 40))
+        print(current_epoch, Loss.value, accuracy)
 
         # Handle keys + mouse
         keys_pressed = pygame.key.get_pressed()

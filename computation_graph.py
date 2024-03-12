@@ -263,15 +263,10 @@ class SquaredLossNode:
         return self.fire()
 
 
-# TODO: Note, regarding layernorm
-#      (1) I'll abandon this for now, because the derivative expression for this is very tricky, but I think if I
-#          spend a day at it, hammering away, and splitting the expression into smaller computation graph chunks,
-#          I'll get it.
-#      (2) For my MLP & regression applications: Like the clickable regression demos, Tensorflow playground,
-#          and even MNIST, there are already reasonable normalizations you can apply to bring the input's
-#          statistics very close to 1, the bias input.
-
 # LayerNorm node
+# NOTE: This only gradchecks when the number of features is at least a handful. If there is only 1 features (e.g.
+# in linear regression it's just a single input + bias, there will be a loss of precision when you perturb by any
+# small amount).
 # (use it at the beginning of an MLP so don't need to worry about rescaling features)
 # (or use it in a transformer architecture)
 class LayerNormNode:
@@ -357,9 +352,55 @@ class RegularizationLossNode:
         pass
 
 
+# Bias trick node (it just adds an extra column of 1s at the end, but the gradient chops off the corresponding column)
+class BiasTrickNode:
+    def __init__(self, tensor, name='bias_trick'):
+        self.tensor = tensor
+        self.parents = [tensor]
+        tensor.children.append(self)
+        self.children = []  # add from outside
+
+        self.value, self.gradients, self.has_cached, self.shape = None, None, None, None  # good practice to initialize in constructor
+        self.reset()
+
+        self.name = name
+
+    def set_input(self, tensor_input: np.ndarray):
+        assert isinstance(self.tensor, TensorNode), 'parent is not a Tensor node, not sure what to set input to!'
+        self.tensor.set_input(tensor_input)
+
+    def reset(self, hard=False):
+        self.__reset_shape__()
+        self.has_cached = False  # this will allow self.value to be overwritten automatically
+        self.gradients = {self.tensor: np.zeros(self.tensor.shape)}
+        for parent in self.parents: parent.reset(hard)  # clean parents, recursively
+
+    def __reset_shape__(self):
+        for parent in self.parents: parent.__reset_shape__()  # set the shape of the parents first
+        self.shape = (self.tensor.shape[0], self.tensor.shape[1] + 1)  # shape of the output. account for the extra column of ones
+
+    def fire(self):
+        # If we haven't already computed this, compute it. Otherwise use cached.
+        if not self.has_cached: self.value = np.hstack( ( self.tensor(), np.ones( (self.tensor.shape[0], 1) ) ) )  # tack on the ones
+        elif print_fired: print('<used cached> ', end='')
+        self.has_cached = True
+        if print_fired: print(self.name, 'was fired.')
+        return self.value
+
+    def backfire(self, from_child):
+        assert from_child in self.children, 'not a valid child of this node!'
+        assert hasattr(from_child, 'gradients')
+        self.gradients[self.tensor] += from_child.gradients[self][:, :-1]  # remove the final column
+        for parent in self.parents: parent.backfire(self)
+
+    def __call__(self, *args, **kwargs):
+        return self.fire()
+
+
 # Component-wise activation function node
 class SimpleActivationNode:
     def __init__(self, tensor, kind: str, name='none'):
+        ''' append_bias controls whether the output of this node should tack on an extra column of ones '''
         activations = {'sigmoid': sigmoid, 'tanh': tanh, 'softplus': softplus, 'relu': relu}
         activations_prime = {'sigmoid': sigmoid_prime, 'tanh': tanh_prime, 'softplus': softplus_prime, 'relu': relu_prime}
         assert str not in activations.keys(), 'not a valid component-wise activation function!'
