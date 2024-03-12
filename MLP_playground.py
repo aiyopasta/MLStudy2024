@@ -86,7 +86,7 @@ if dataset == 0:
         x_train.append(r * np.array([np.cos(theta), np.sin(theta)]))
         y_train.append(0 if r < cutoff else 1)  # 0 = inside class, 1 = outside class
 elif dataset == 1:
-    angle = np.radians(120)  # angle the normal vector of the decision boundary should make with horizontal
+    angle = np.radians(200)  # angle the normal vector of the decision boundary should make with horizontal
     sidelen = height * 0.8
     for i in range(n_examples):
         pt = np.random.uniform(-sidelen/2, +sidelen/2, size=2)
@@ -103,7 +103,9 @@ else:
 assert np.all((np.array(y_train) == 0) | (np.array(y_train) == 1)), 'labels must be of the form 0, 1, 2...'
 
 # Build computation graph (TODO: add functionality for many more hidden layers, neurons, and classes)
-n_hidden = 3  # number of neurons in single (for now) hidden layer
+# Note that because of glsl's visualization limits, we can only have 3 neurons per hidden unit, as that
+# would mean 3 weights + 1 bias = 4 maximum dimension of matrices, which is the max that glsl supports.
+n_hidden = 3  # number of neurons in single (for now) hidden layer.
 n_outputs = 2  # 2 classes
 # note: read "W_b" as "W and b", 'b' for bias vector. and 'XW_b" as 'XW+b", where b is the bias vector included in W.
 X = BiasTrickNode(TensorNode(learnable=False, shape=(len(x_train), 2), name='X_data'))  # (x1, x2) + 1 bias
@@ -347,9 +349,13 @@ def main():
         # (2) Send the uniform 'time' variable
         program['time'] = count
         # (3) Send any more uniform variables here...
+        # (a) For drawing / display
         program['window_dims'] = np.array([width, height])
         program['db_offset'] = db_offset
         program['db_sidelen'] = db_sidelen
+        # (b) The actual MLP params
+        program['W_b'] = W_b.value.flatten()
+        program['W2_b'] = W2_b.value.flatten()
         # (4) Render the result to the screen
         render_object.render(mode=moderngl.TRIANGLE_STRIP)
 
