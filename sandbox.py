@@ -5,12 +5,18 @@ T = np.array([[-0.07426286,  0.12243876],
               [-0.0481759 , -0.0481759 ],
               [ 0.12243876, -0.07426286]])
 
-y = np.array([[1],
-              [0],
-              [1]])
+# D = np.sum(T, axis=1, keepdims=True) * np.ones_like(T)
+# print(D)
 
-M2 = np.zeros_like(T)
-row_idxs = np.arange(T.shape[0])
-y_flat = y.flatten()
-M2[row_idxs, y_flat] = T[row_idxs, y_flat]
-print(M2)
+D = T - np.mean(T, axis=1, keepdims=True)
+print(D)
+
+# y = np.array([[1],
+#               [0],
+#               [1]])
+#
+# M2 = np.zeros_like(T)
+# row_idxs = np.arange(T.shape[0])
+# y_flat = y.flatten()
+# M2[row_idxs, y_flat] = T[row_idxs, y_flat]
+# print(M2)

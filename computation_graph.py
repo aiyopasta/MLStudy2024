@@ -271,73 +271,83 @@ class SquaredLossNode:
 #          and even MNIST, there are already reasonable normalizations you can apply to bring the input's
 #          statistics very close to 1, the bias input.
 
-# # LayerNorm node
-# # (use it at the beginning of an MLP so don't need to worry about rescaling features)
-# # (or use it in a transformer architecture)
-# class LayerNormNode:
-#     def __init__(self, tensor, gamma=None, beta=None, name='layernorm'):
-#         ''' this layer eats a mini-batch and rescales each individual example: (i) first to 0 mean
-#             and unit variance, and (ii) second, optionally, to a learned scaling gamma and learned offset.
-#         '''
-#         assert len(tensor.shape) == 2, 'layernorm hasn\'t been implemented for >2 tensors!'
-#         self.parents = [tensor]
-#         if gamma is not None:
-#             assert gamma.shape[0] == tensor.shape[0], 'gamma\'s shape does not match!'
-#             assert gamma.shape[1] == 1, 'gamma must have 1 column!'
-#             self.gamma = gamma
-#             self.parents.append(gamma)
-#         if beta is not None:
-#             assert beta.shape[0] == tensor.shape[0], 'gamma\'s shape does not match!'
-#             assert beta.shape[1] == 1, 'beta must have 1 column!'
-#             self.beta = beta
-#             self.parents.append(beta)
-#
-#         self.tensor = tensor
-#         tensor.children.append(self)
-#         gamma.children.append(self)
-#         beta.children.append(self)
-#         self.children = []  # add from outside
-#
-#         self.value, self.gradients, self.has_cached, self.shape = None, None, None, None  # good practice to initialize in constructor
-#         self.reset()
-#
-#         self.name = name
-#
-#     def reset(self, hard=False):
-#         self.__reset_shape__()
-#         self.has_cached = False  # this will allow self.value to be overwritten automatically
-#         self.gradients = {self.tensor: np.zeros(self.tensor.shape)}  # recall gradient should be able to flow through tensor too! (e.g. in a transformer)
-#         if hasattr(self, 'gamma'): self.gradients[self.gamma] = np.zeros(self.gamma.shape)
-#         if hasattr(self, 'beta'): self.gradients[self.beta] = np.zeros(self.beta.shape)
-#         for parent in self.parents: parent.reset(hard)  # clean parents, recursively
-#
-#     def __reset_shape__(self):
-#         for parent in self.parents: parent.__reset_shape__()  # set the shape of the parents first
-#         self.shape = self.tensor.shape  # the output is still just the original mini-batch, just with different scaling
-#
-#     def fire(self):
-#         # If we haven't already computed this, compute it. Otherwise use cached.
-#         if not self.has_cached:
-#             mu, std = np.mean(self.tensor, axis=1).reshape(-1, 1), np.std(self.tensor, axis=1).reshape(-1, 1)
-#             self.value = (self.tensor - mu) / std
-#             if hasattr(self, 'gamma'): self.value *= self.gamma
-#             if hasattr(self, 'beta'): self.value += self.beta
-#         elif print_fired: print('<used cached> ', end='')
-#         self.has_cached = True
-#         if print_fired: print(self.name, 'was fired.')
-#         return self.value
-#
-#     def backfire(self, from_child):
-#         assert from_child in self.children, 'not a valid child of this node!'
-#         assert hasattr(from_child, 'gradients')
-#         child_gradient = from_child.gradient[self]  # TODO what'll be the dimension here?
-#         self.gradients[self.tensor] +=  * child_gradient  # TODO
-#         if hasattr(self, 'gamma'): self.gradients[self.std] +=  * child_gradient  # TODO
-#         if hasattr(self, 'beta'): self.gradients[self.std] += *child_gradient  # TODO
-#         for parent in self.parents: parent.backfire(self)
-#
-#     def __call__(self, *args, **kwargs):
-#         return self.fire()
+# LayerNorm node
+# (use it at the beginning of an MLP so don't need to worry about rescaling features)
+# (or use it in a transformer architecture)
+class LayerNormNode:
+    def __init__(self, tensor, gamma=None, beta=None, name='layernorm'):
+        ''' this layer eats a mini-batch and rescales each individual example: (i) first to 0 mean
+            and unit variance, and (ii) second, optionally, to a learned scaling gamma and learned offset.
+        '''
+        assert len(tensor.shape) == 2, 'layernorm hasn\'t been implemented for >2 tensors!'
+        self.parents = [tensor]
+        if gamma is not None:
+            assert gamma.shape[0] == tensor.shape[0], 'gamma\'s shape does not match!'
+            assert gamma.shape[1] == 1, 'gamma must have 1 column!'
+            self.gamma = gamma
+            self.parents.append(gamma)
+            gamma.children.append(self)
+        if beta is not None:
+            assert beta.shape[0] == tensor.shape[0], 'gamma\'s shape does not match!'
+            assert beta.shape[1] == 1, 'beta must have 1 column!'
+            self.beta = beta
+            self.parents.append(beta)
+            beta.children.append(self)
+
+        self.tensor = tensor
+        tensor.children.append(self)
+        self.children = []  # add from outside
+
+        self.value, self.gradients, self.has_cached, self.shape = None, None, None, None  # good practice to initialize in constructor
+        self.reset()
+
+        self.name = name
+
+    def reset(self, hard=False):
+        self.__reset_shape__()
+        self.has_cached = False  # this will allow self.value to be overwritten automatically
+        self.gradients = {self.tensor: np.zeros(self.tensor.shape)}  # recall gradient should be able to flow through tensor too! (e.g. in a transformer)
+        if hasattr(self, 'gamma'): self.gradients[self.gamma] = np.zeros(self.gamma.shape)
+        if hasattr(self, 'beta'): self.gradients[self.beta] = np.zeros(self.beta.shape)
+        for parent in self.parents: parent.reset(hard)  # clean parents, recursively
+
+    def __reset_shape__(self):
+        for parent in self.parents: parent.__reset_shape__()  # set the shape of the parents first
+        self.shape = self.tensor.shape  # the output is still just the original mini-batch, just with different scaling
+
+    def fire(self):
+        # If we haven't already computed this, compute it. Otherwise use cached.
+        if not self.has_cached:
+            mu, std = np.mean(self.tensor(), axis=1).reshape(-1, 1), np.std(self.tensor(), axis=1, ddof=1).reshape(-1, 1) + 1e-10
+            self.value = (self.tensor() - mu) / std
+            if hasattr(self, 'gamma'): self.value *= self.gamma()
+            if hasattr(self, 'beta'): self.value += self.beta()
+        elif print_fired: print('<used cached> ', end='')
+        self.has_cached = True
+        if print_fired: print(self.name, 'was fired.')
+        return self.value
+
+    def backfire(self, from_child):
+        assert from_child in self.children, 'not a valid child of this node!'
+        assert hasattr(from_child, 'gradients')
+        child_gradient = from_child.gradients[self]
+        assert child_gradient.shape == self.tensor.shape
+        S = np.sum(child_gradient, axis=1, keepdims=True) * np.ones_like(child_gradient)
+        mu, std = np.mean(self.tensor(), axis=1, keepdims=True), np.std(self.tensor(), axis=1, ddof=1, keepdims=True) + 1e-10
+        XminusMu = self.tensor() - mu
+        XminusMuoverSigmaCubed = XminusMu / np.power(std, 3.0)
+        n = self.tensor.shape[1]
+        colvector = np.sum(child_gradient * XminusMuoverSigmaCubed, axis=1, keepdims=True)
+        self.gradients[self.tensor] += ((child_gradient / std) - ((1/n) * S / std) - (XminusMu * colvector / (n-1)))# * self.gamma().T
+        # if hasattr(self, 'gamma'): self.gradients[self.std] +=  * child_gradient  # TODO
+        # if hasattr(self, 'beta'): self.gradients[self.std] += *child_gradient  # TODO
+        for parent in self.parents: parent.backfire(self)
+
+    def __call__(self, *args, **kwargs):
+        return self.fire()
+
+    def __repr__(self):
+        return str(self.value)
 
 
 
