@@ -36,9 +36,9 @@ quad_buffer = ctx.buffer(data=np.array([
 ], dtype='f').tobytes())
 
 # Import vertex and frag shaders
-with open('vert_linear.glsl', 'r') as file:
+with open('vert_db.glsl', 'r') as file:
     vert_shader = file.read()
-with open('frag_linear.glsl', 'r') as file:
+with open('frag_db.glsl', 'r') as file:
     frag_shader = file.read()
 
 # Kind of "bundle up" the two shader programs (vert & frag) together. This'll compile them too, I think.
@@ -86,7 +86,7 @@ if dataset == 0:
         x_train.append(r * np.array([np.cos(theta), np.sin(theta)]))
         y_train.append(0 if r < cutoff else 1)  # 0 = inside class, 1 = outside class
 elif dataset == 1:
-    angle = np.radians(45)  # angle the normal vector of the decision boundary should make with horizontal
+    angle = np.radians(120)  # angle the normal vector of the decision boundary should make with horizontal
     sidelen = height * 0.8
     for i in range(n_examples):
         pt = np.random.uniform(-sidelen/2, +sidelen/2, size=2)
@@ -227,8 +227,25 @@ def train_step(x_input, y_input):
         param.update({'alpha': 0.001})
 
 
+# Visualization parameters (for decision boundary visualization window and more)
+# Diagram — LEFT: Live warping animation. MIDDLE: MLP live depiction. RIGHT: Live decision boundary visualization.
+db_sidelen = 0.8 * height
+db_offset = np.array([(width/2) - (db_sidelen/2 + 50.0), 0.0])
 
-# Additional vars (for drawing and such)
+# Coordinate shift into the decision boundary window. Usage for drawing: A(DB(val))
+def DB(val):
+    global db_sidelen, db_offset
+    value = np.array(val)
+    factor = db_sidelen / height
+    return (value * factor) + db_offset
+
+def DB_inv(val):
+    global db_sidelen, db_offset
+    value = np.array(val)
+    inv_factor = height / db_sidelen
+    return (value - db_offset) * inv_factor
+
+# Additional vars (for pygame drawing and such)
 drag_idx = -1  # index of point being moved. -1 if none
 point_radius = 5
 n_samples = 100  # number of samples for drawing the learned curve
@@ -254,7 +271,7 @@ def handle_mouse(event):
     global x_train, y_train, point_radius, drag_idx, should_retrain
     # Either add a new point or select existing one for dragging
     if drag_idx == -1:
-        pos = A_inv(pygame.mouse.get_pos())
+        pos = DB_inv(A_inv(pygame.mouse.get_pos()))
         is_selecting = [np.linalg.norm(pos - x_) < point_radius for x_, y_ in zip(x_train, y_train)]
         if np.any(is_selecting): drag_idx = is_selecting.index(True)
         else:
@@ -267,7 +284,7 @@ def handle_mouse(event):
 
 
 def main():
-    global prev_mouse_pos, point_radius, n_samples, should_retrain, current_epoch, max_epochs, x_train, y_train, Loss, accuracy
+    global prev_mouse_pos, point_radius, n_samples, should_retrain, current_epoch, max_epochs, x_train, y_train, Loss, accuracy, db_sidelen, db_offset
 
     # Pre-gameloop stuff
     run = True
@@ -281,7 +298,7 @@ def main():
 
         # UPDATE MODEL / DATA ————
         # Move point being dragged to mouse location. If it's a new drag location, need to restart training.
-        mouse_pos = A_inv(pygame.mouse.get_pos())
+        mouse_pos = DB_inv(A_inv(pygame.mouse.get_pos()))
         if drag_idx != -1:
             x_train[drag_idx] = np.array(mouse_pos)
             should_retrain = should_retrain or np.linalg.norm(prev_mouse_pos - mouse_pos) > 1e-10
@@ -306,10 +323,12 @@ def main():
             should_retrain = False
 
         # DRAW USING PYGAME COMMANDS ————
+        # Draw decision boundary window bounding box
+        pygame.draw.rect(screen, colors['white'], (*tuple(A([0,0]) + db_offset - np.array([db_sidelen/2, db_sidelen/2])), db_sidelen, db_sidelen), width=1)
         # Draw training points
         for x_, y_ in zip(x_train, y_train):
             col = colors['red'] if y_ == 0 else colors['blue']
-            pygame.draw.circle(screen, col, A(x_), radius=point_radius, width=0)
+            pygame.draw.circle(screen, col, A(DB(x_)), radius=point_radius, width=0)
 
         # Draw training epochs
         # text = font.render('Epoch: '+str(min(current_epoch, max_epochs))+'/'+str(max_epochs), True, colors['red'])
@@ -327,7 +346,10 @@ def main():
         program['tex'] = 0  # send in the texture in texture unit 0 to the uniform tex variable
         # (2) Send the uniform 'time' variable
         program['time'] = count
-        # (3) TODO: Send any more uniform variables here...
+        # (3) Send any more uniform variables here...
+        program['window_dims'] = np.array([width, height])
+        program['db_offset'] = db_offset
+        program['db_sidelen'] = db_sidelen
         # (4) Render the result to the screen
         render_object.render(mode=moderngl.TRIANGLE_STRIP)
 
