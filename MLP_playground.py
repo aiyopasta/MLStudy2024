@@ -16,7 +16,7 @@ pygame.display.gl_set_attribute(pygame.GL_CONTEXT_PROFILE_MASK, pygame.GL_CONTEX
 pygame.display.gl_set_attribute(pygame.GL_CONTEXT_FORWARD_COMPATIBLE_FLAG, True)
 
 # Pygame + gameloop setup
-width = 800
+width = 2000
 height = 800
 # The pygame.OPENGL flag is what makes the ctx's create context method hook on to pygame automatically
 window = pygame.display.set_mode((width, height), pygame.OPENGL | pygame.DOUBLEBUF)
@@ -70,16 +70,37 @@ def A_many(vals):
 
 
 # THE ACTUAL CODE STARTS HERE —————————————————————————————————————————————————————————————————————————————————
-# Training data (raw, not normalized)
-max_radius = height / 3.
-cutoff = max_radius * 0.6
-n_examples = 100
+# Generate training data (raw, not normalized or shifted to fit in visualization window).
+# Points will shifted to fit into the little window used for visualization of the decision boundary at draw time.
+# So here, create the points as if "height" and "width" refer simply to the visualization window's dimensions.
+# TODO: Add a bit of jitter
+dataset = 1  # 0 = radial, 1 = linear
 x_train, y_train = [], []
-for i in range(n_examples):
-    r = max_radius * np.sqrt(np.random.random())
-    theta = np.random.random() * 2.0 * np.pi
-    x_train.append(r * np.array([np.cos(theta), np.sin(theta)]))
-    y_train.append(0 if r < cutoff else 1)  # 0 = inside class, 1 = outside class
+n_examples = 100
+if dataset == 0:
+    max_radius = height / 3.
+    cutoff = max_radius * 0.6
+    for i in range(n_examples):
+        r = max_radius * np.sqrt(np.random.random())
+        theta = np.random.random() * 2.0 * np.pi
+        x_train.append(r * np.array([np.cos(theta), np.sin(theta)]))
+        y_train.append(0 if r < cutoff else 1)  # 0 = inside class, 1 = outside class
+elif dataset == 1:
+    angle = np.radians(45)  # angle the normal vector of the decision boundary should make with horizontal
+    sidelen = height * 0.8
+    for i in range(n_examples):
+        pt = np.random.uniform(-sidelen/2, +sidelen/2, size=2)
+        x_train.append(pt)
+        nor = np.array([np.cos(angle), np.sin(angle)])
+        label = int(np.round((np.sign(np.dot(nor, pt)) / 2.0) + 0.5))
+        y_train.append(label)
+
+
+else:
+    print('huh?')
+
+# print(np.array(x_train))
+assert np.all((np.array(y_train) == 0) | (np.array(y_train) == 1)), 'labels must be of the form 0, 1, 2...'
 
 # Build computation graph (TODO: add functionality for many more hidden layers, neurons, and classes)
 n_hidden = 3  # number of neurons in single (for now) hidden layer
