@@ -8,6 +8,8 @@
 #     Only thing I can think of (and seems to work) is just bumping up the bias 1 by something else like 500.0.
 #     Changing the initial WEIGHT for the bias term from 0.01 to something like 500.0 does NOT work, however.
 #
+#  (3) *OHH* we need to have gamma and beta for layernorm to work even in the toy examples I think! Let me try
+#      this... hopefully it fixes the need of the "bias_value" parameters.
 
 import moderngl
 import numpy as np

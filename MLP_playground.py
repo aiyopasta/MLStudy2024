@@ -2,6 +2,8 @@
 # in real-time. There's a visualizer for the live decision boundary, as well as a visual
 # of the opposing POV, where the input space is warped to make the data linearly separable.
 #
+# NOTES / OBSERVATIONS: (1) Sometimes, the learning rate is too high even for Adagrad (I think?)
+#
 import moderngl
 import numpy as np
 import pygame
@@ -235,7 +237,7 @@ def train_step(x_input, y_input):
     Loss.backfire()
     for param in [W_b, W2_b]:
         # param.update(params={'alpha': 0.0000001}, method='GD')
-        param.update(params={'alpha': 0.1}, method='adagrad')
+        param.update(params={'alpha': 0.02}, method='adagrad')
 
     # Print epochs, loss, accuracy
     # print(current_epoch, Loss.value, accuracy)
@@ -345,6 +347,8 @@ def main():
         # Essentially more epochs to the training if the data has changed
         if should_retrain:
             current_epoch = 0
+            W_b.cache = 0.0    # TODO: SHOULD NOT BE DOING THIS HERE, MOVE SOMEWHERE ELSE LIKE IN RESET()!
+            W2_b.cache = 0.0
             should_retrain = False
 
         # DRAW USING PYGAME COMMANDS ————
