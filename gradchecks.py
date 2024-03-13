@@ -5,95 +5,56 @@ import numpy as np
 from computation_graph import *
 np.random.seed(42)
 
-n_hidden = 10
-n_outputs = 1
+dataset = 2  # 0 = radial, 1 = affine, 2 = v-shaped
+x_train, y_train = [], []
+n_examples = 100
+# Radial
+if dataset == 0:
+    max_radius = height / 3.
+    cutoff = max_radius * 0.6
+    for i in range(n_examples):
+        r = max_radius * np.sqrt(np.random.random())
+        theta = np.random.random() * 2.0 * np.pi
+        x_train.append(r * np.array([np.cos(theta), np.sin(theta)]))
+        y_train.append(0 if r < cutoff else 1)  # 0 = inside class, 1 = outside class
+# Affine
+elif dataset == 2:
+    angle = np.radians(45)
+    offset = np.array([100.0, 100.0])
+    sidelen = height * 0.8
+    for i in range(n_examples):
+        pt = np.random.uniform(-sidelen / 2, +sidelen / 2, size=2)
+        x_train.append(pt)
+        nor = np.array([np.cos(angle), np.sin(angle)])
+        label = int(np.round((np.sign(np.dot(nor, pt - offset)) / 2.0) + 0.5))
+        y_train.append(label)
+# V-shaped
+elif dataset == 2:
+    angle = np.radians(30)  # angle the normal vector of the decision boundary should make with horizontal
+    sidelen = height * 0.8
+    for i in range(n_examples):
+        pt = np.random.uniform(-sidelen/2, +sidelen/2, size=2)
+        x_train.append(pt)
+        nor = np.array([np.cos(angle), np.sin(angle)])
+        label1 = int(np.round((np.sign(np.dot(nor, pt)) / 2.0) + 0.5))
+        nor2 = np.array([-np.sin(angle), np.cos(angle)])
+        label2 = int(np.round((np.sign(np.dot(nor2, pt)) / 2.0) + 0.5))
+        y_train.append(label1 & label2)
+else:
+    print('huh?')
 
-# Training data (raw, not normalized)
-x_train = list(np.linspace(-100.0, 100.0, 100))  # TODO: change back to 100
-# x_train = np.random.rand(3, 5)
-y_train = [-0.5 * x - 100 + np.random.randint(-100, 100) for x in range(len(x_train))]  # for regression problems
-# y_train = np.random.randint(0, n_outputs, np.shape(x_train)[0])
-
-# X = TensorNode(learnable=False, shape=(len(x_train), 2), name='X_data')  # one extra feature for bias term
-# y = TensorNode(learnable=False, shape=(len(y_train), 1), name='y_labels')
-# W = TensorNode(learnable=True, shape=(2, n_hidden), name='Weights-Layer-1')  # 1 weight + 1 bias, 1 hidden layer with 2 neurons
-# XW = MultiplicationNode(X, W)
-# Z = SimpleActivationNode(XW, kind='sigmoid')
-# W2 = TensorNode(learnable=True, shape=(n_hidden, n_outputs), name='Weights-Layer-2')  # 1 weight + 1 bias
-# ZW = MultiplicationNode(Z, W2, 'poopy')
-# # Loss = SquaredLossNode(mu=ZW, y=y)
-# soft = SoftmaxNode(ZW)
-# Loss = CrossEntropyLossNode(soft, y)
-# # List of all nodes, for convenience
-# node_list = [X, y, W, XW, soft, Loss]
-
-# X = TensorNode(learnable=True, shape=(len(x_train), 2), name='X_data')  # one extra feature for bias term
-# X_normed = LayerNormNode(X)
-# y = TensorNode(learnable=False, shape=(len(y_train), 1), name='y_labels')
-# W = TensorNode(learnable=True, shape=(2, n_hidden), name='Weights-Layer-1')  # 1 weight + 1 bias, 1 hidden layer with 2 neurons
-# XW = MultiplicationNode(X_normed, W)
-# Z = SimpleActivationNode(XW, kind='sigmoid')
-# W2 = TensorNode(learnable=True, shape=(n_hidden, n_outputs), name='Weights-Layer-2')  # 1 weight + 1 bias
-# ZW = MultiplicationNode(Z, W2, 'poopy')
-# # Loss = SquaredLossNode(mu=ZW, y=y)
-# soft = SoftmaxNode(ZW)
-# Loss = CrossEntropyLossNode(soft, y)
-# # List of all nodes, for convenience
-# node_list = [X, X_normed, y, W, XW, soft, Loss]
-
-X = TensorNode(learnable=True, shape=(len(x_train), 2), name='X_data')
+n_hidden = 3  # number of neurons in single (for now) hidden layer.
+n_outputs = 2  # 2 classes
+# note: read "W_b" as "W and b", 'b' for bias vector. and 'XW_b" as 'XW+b", where b is the bias vector included in W.
+X = BiasTrickNode(TensorNode(learnable=False, shape=(len(x_train), 2), name='X_data'))  # (x1, x2) + 1 bias
 X_normed = LayerNormNode(X)
 y = TensorNode(learnable=False, shape=(len(y_train), 1), name='y_labels')
-W = TensorNode(learnable=True, shape=(2, n_outputs), name='Weights-Layer-1')  # 5 weights, 1 output
-XW = MultiplicationNode(X_normed, W)
-Loss = SquaredLossNode(XW, y)
+W_b = TensorNode(learnable=True, shape=(3, n_hidden), name='WeightsBias-Layer-1')  # 3 weights per hidden neuron (for x1, x2, and bias)
+XW_b = MultiplicationNode(X_normed, W_b)
+Z = BiasTrickNode(SimpleActivationNode(XW_b, kind='relu'))
+W2_b = TensorNode(learnable=True, shape=(n_hidden + 1, n_outputs), name='WeightsBias-Layer-2')  # num of hidden neurons + bias
+ZW_b = MultiplicationNode(Z, W2_b)
+Soft = SoftmaxNode(ZW_b)
+Loss = CrossEntropyLossNode(Soft, y)
 # List of all nodes, for convenience
-node_list = [X, X_normed, y, W, XW, Loss]
-
-# Initialize weights & biases randomly
-W.set_input(np.random.rand(*W.shape))
-# W2.set_input(np.random.rand(*W2.shape))
-
-# Preprocess input
-x_raw = np.array(x_train)
-x_input = np.reshape(x_raw, (len(x_raw), 1))
-x_input = np.hstack((x_input, 1 * np.ones((len(x_raw), 1))))  # bias trick TODO change back to 1
-y_input = np.reshape(y_train, (len(y_train), 1))
-
-# Set the inputs
-X.set_input(x_input)
-y.set_input(y_input)
-
-# The gradient check
-h = 1e-5
-for param in [X]:
-    Loss.reset()
-    Loss.fire()
-    print(X)
-    print(X_normed)
-    # print(W)
-    # print(XW.value)
-    Loss.backfire()
-    old_param = copy.copy(param)
-    for flat_idx in [0, 1, 2, 3, 4, 5]:
-        old, actual_grad = old_param.get_values_from_flat(flat_idx)
-        print('Checking gradient for', param.name, flat_idx, 'parameter.')
-        Loss.reset()
-        param.set_value_from_flat(old + h, flat_idx)
-        Jplus = Loss.fire()
-        # print(X)
-        # print(X_normed)
-        # print(W)
-        # print(XW.value)
-        Loss.reset()
-        param.set_value_from_flat(old - h, flat_idx)
-        Jminus = Loss.fire()
-        Loss.reset()
-        numerical_grad = ((Jplus - Jminus) / (2 * h))[0]
-        param.set_value_from_flat(old, flat_idx)
-        print('Jplus:', Jplus, 'Jminus:', Jminus)
-        print('Actual:', actual_grad)
-        print('Numerical:', numerical_grad)  # TODO: Implement a legit comparison, e.g. relative error.
-        rel_error = abs(actual_grad - numerical_grad) / max(abs(actual_grad), abs(numerical_grad))
-        print('Relative error between the two:', rel_error)
-        print()
+node_list = [X, X_normed, y, W_b, XW_b, Z, W2_b, ZW_b, Soft, Loss]

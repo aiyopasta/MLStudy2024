@@ -8,10 +8,9 @@ uniform vec2 window_dims;
 uniform vec2 db_offset;
 uniform float db_sidelen;
 // MLP params
-//uniform mat3x3 W_b;
-//uniform mat4x2 W2_b;
 uniform mat3x3 W_bT;
 uniform mat4x2 W2_bT;  // T's here stand for TRANSPOSE (and recall 4x2 here means 4 COLUMNS & 2 ROWS)
+uniform vec2 bias_vals;
 
 in vec2 uvs;       // the ported, interpolated uv coords (from [0, 1]^2)
 out vec4 f_color;  // the only output here is the fragment color, as usual :)
@@ -42,6 +41,14 @@ float sigmoid(float tau) {
     return 1.0 / (1.0 + exp(-tau));
 }
 
+float relu(float tau) {
+    return max(0.0, tau);
+}
+
+float softplus(float tau) {
+    return log(1.0 + exp(tau));
+}
+
 float soft(int i, vec2 arr) {
     return exp(arr[i]) / (exp(arr.x) + exp(arr.y));
 }
@@ -55,21 +62,21 @@ vec2 softmax(vec2 arr) {
 // Note that "vec2 x" must be in the "good" coordinates & NON-DB-SHIFTED, just as the network was trained!
 float MLP(vec2 x) {
     // Apply bias trick + normalize
-    vec3 x_1 = vec3(x, 1.0);
+    vec3 x_1 = vec3(x, bias_vals.x);
     vec2 mu_sigma = mean_std(x_1);
-    vec3 x_1normed = (x_1 - vec3(mu_sigma.x)) / vec3(mu_sigma.y);
+    vec3 x_1normed = x_1; //(x_1 - vec3(mu_sigma.x)) / vec3(mu_sigma.y);
     // Hidden layer
     vec3 wx_b = W_bT * x_1normed;
-    vec4 z_1 = vec4(vec3(sigmoid(wx_b.x), sigmoid(wx_b.y), sigmoid(wx_b.z)), 1.0);
+    vec4 z_1 = vec4(vec3(relu(wx_b.x), relu(wx_b.y), relu(wx_b.z)), bias_vals.y);
     // Output
     vec2 zw_b = softmax(W2_bT * z_1);
-    return zw_b.x;  // just return one of the 2 probabilities
+    return round(zw_b.x);  // just return one of the 2 probabilities
 }
 
 
 void main() {
     // For some reason, you have to use ALL the uniform variables in some capacity for it to run.
-    time; tex; db_sidelen; db_offset; window_dims; W_bT; W2_bT;
+    time; tex; db_sidelen; db_offset; window_dims; W_bT; W2_bT; bias_vals;
 
     // THE ACTUAL CODE ——————————————————————————————————————————————
     float width = window_dims.x, height = window_dims.y;

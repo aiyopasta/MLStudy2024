@@ -1,28 +1,13 @@
-# The same linear regression algorithm, but with a slight modification: Layer-norm.
-# Previously, I was normalizing the inputs in a "batchnorm" type of way; i.e. over the
-# entire training set (because here, the batches I'm using is simply the whole set).
-# But this is not what we actually want; we want the FEATURES of an INDIVIDUAL data point
-# to be within the same scope of each-other (e.g. in vanilla linreg, x should be on the
-# same order of 1, the bias feature). The batch-norm type thing I was doing earlier worked
-# well simply because I was choosing a mean of 0, std of 1 across all the batches. But this
-# is not ideal, especially since I'm planning on implementing more than just 2 features, i.e.
-# I'm gonna implement features like x^2, x^3, ... x^{arbitrary degree}. We truly just want
-# each FEATURE to be in the same scope, not the examples.
+# Stuff I learned / observations:
+# (1) Layernorm doesn't work well if the number of neurons in a layer is not large! Looks like a step-function.
+#     Example: If you turn on the Layernorm layer (and bump up alpha), but only use normal linear regression
+#              with the bias trick, it only roughly "sees" 2 kinds of inputs, e.g. [-0.70710678  0.70710678]
+#              because ____ (TODO: finish).
 #
+# (2) However, we still need to deal with the bad statistics induced by using the bias trick. So what to do?
+#     Only thing I can think of (and seems to work) is just bumping up the bias 1 by something else like 500.0.
+#     Changing the initial WEIGHT for the bias term from 0.01 to something like 500.0 does NOT work, however.
 #
-# This is typically done with a layer-norm layer in the computation graph, with 2 learnable
-# parameters gamma and beta, which are the same dimension as the # of features. To be honest,
-# I don't fully understand why it's necessarily a good idea to include gamma, as the layer
-# afterwards (even in some parts of the transformer) is just a linear layer of an MLP, so
-# the weights can simply absorb that. There's probably a good reason, like maybe the MLP
-# should only be focused on "thinking" on the semantics of the output of the attention,
-# not be bothered with rescaling. Who knows? Probably Mr. Karpathy does.
-#
-#
-#  Update: See computation_graph.py note. TDLR: Screw layernorm layer, for now.
-#          Just use non-diffable batch-normalization for now.
-#
-#  The other points of this file: (1) Polybasis (2) Heteroskedastic (3) Regularization
 
 import moderngl
 import numpy as np
@@ -92,49 +77,79 @@ def A_many(vals):
 
 
 # THE ACTUAL CODE STARTS HERE —————————————————————————————————————————————————————————————————————————————————
-def polybasis(raw, degree=1.):
-    ''' raw: input training/testing data (raw, un-normalized) in the form [x1, x2, ..., xm] for m points
-        returns: [[x1^0=1, x1^1, x1^2, x1^3, ..., x1^degree]]
-    '''
-
-
 # Training data (raw, not normalized)
 x_train = list(np.linspace(-width/2, width/2, 100))
-y_train = [-0.5 * x - 100 + np.random.randint(-100, 100) for x in x_train]
+y_train = [-0.5 * x - 200 + np.random.randint(-100, 100) for x in x_train]
 
-# Polynomial degree
-degree = 1
+# Data normalization parameters (need to use the same ones at test time)
+x_mean, x_std = np.mean(x_train), np.std(x_train)
+y_mean, y_std = np.mean(y_train), np.std(y_train)
 
-# Build computation graph (TensorNode, TensorNode(learnable)) --> Multiplication Node --> SquaredLossNode <-- TensorNode
-# Create the nodes (for homoskedastic linear regression, for now)
-X = TensorNode(learnable=False, shape=(len(x_train), degree + 1), name='X_data')  # + 1 bias term (i.e. for degree=5: ax^5 + bx^4 + cx^3 + dx^2 + ex + bias)
-X_normed = LayerNormNode(X)
-y = TensorNode(learnable=False, shape=(len(y_train), 1), name='y_labels')
-W = TensorNode(learnable=True, shape=(degree + 1, 1), name='Weights')  # 1 weight + 1 bias
-XW = MultiplicationNode(X_normed, W)
-Loss = SquaredLossNode(mu=XW, y=y)
+# Normal linear regression (using bias trick, but no layernorm)
+# X = BiasTrickNode(TensorNode(learnable=False, shape=(len(x_train), 1), name='X_data'), bias_val=500.0)
+# X_normed = X#LayerNormNode(X)
+# y = TensorNode(learnable=False, shape=(len(y_train), 1), name='y_labels')
+# W_b = TensorNode(learnable=True, shape=(2, 1), name='Weights')  # 1 weight + 1 bias
+# XW_b = MultiplicationNode(X_normed, W_b)
+# Loss = SquaredLossNode(mu=XW_b, y=y)
 # List of all nodes, for convenience
-node_list = [X, X_normed, y, W, XW, Loss]
+# node_list = [X, X_normed, y, W_b, XW_b, Loss]
 
-# Initialize weights & biases for training. TODO: Finish (don't set W=0)
-W.value[5, 0] = 0.01
+# MLP
+n_hidden = 3  # number of neurons in single (for now) hidden layer.
+n_outputs = 1  # 1 predicted y-value
+X = BiasTrickNode(TensorNode(learnable=False, shape=(len(x_train), 1), name='X_data'), bias_val=100.0)
+W_b = TensorNode(learnable=True, shape=(2, n_hidden), name='Weights')  # 1 weight + 1 bias
+y = TensorNode(learnable=False, shape=(len(y_train), 1), name='y_labels')
+XW_b = MultiplicationNode(X, W_b)
+Z = BiasTrickNode(SimpleActivationNode(XW_b, kind='relu'), bias_val=500.0)
+W2_b = TensorNode(learnable=True, shape=(n_hidden+1, 1), name='Weights')  # 1 weight + 1 bias
+ZW_b = MultiplicationNode(Z, W2_b)
+Loss = SquaredLossNode(mu=ZW_b, y=y)
+# List of all nodes, for convenience
+node_list = [X, W_b, y, XW_b, Z, W2_b, ZW_b, Loss]
+
+
+
+# Initialize weights & biases for training.
+# (1) For biases, initialize with 0.01, which is recommended
+for h_ in range(1): W_b.value[W_b.shape[0]-1, h_] = 0.01
+for o_ in range(1): W2_b.value[W2_b.shape[0]-1, o_] = 0.01
+# print(W_b.value)
+# print()
+# (2) For weights, use Glorot initialization (assuming activation function is sigmoid or tanh!)
+for param in [W_b, W2_b]:
+    actfn = Z.parents[0].actfn
+    if actfn in [sigmoid, tanh]:
+        a = np.sqrt(6.0 / (param.shape[0] + param.shape[1]))
+        param.value[:-1, :] = np.random.uniform(-a, a, size=(param.shape[0]-1, param.shape[1]))
+    elif actfn in [relu, softplus]:
+        mu = 0.0
+        sigma = np.sqrt(2.0 / param.shape[0])
+        param.value[:-1, :] = np.random.normal(mu, sigma, size=(param.shape[0] - 1, param.shape[1]))
+    else:
+        print('Not sure how to initialize weights...')
 
 # Training parameters
 h = 1e-5  # for gradient checking
 should_retrain = False
-max_epochs = 1000
+max_epochs = 3000
 current_epoch = 0  # we'll increment by 1 before current the first epoch
 
 
 # Preprocessing
 def preprocess(x_raw=None, y_raw=None):
+    global x_mean, x_std, y_mean, y_std
     assert x_raw is not None or y_raw is not None, 'what do u even want me to preprocess, fool?'
     x_input, y_input = None, None
     if x_raw is not None:
         x_raw = np.array(x_raw)
-        x_input = np.reshape(x_raw, (x_raw.shape[1], 1))  # TODO (finish this, handle all degree cases. maybe call polybasis from inside here too)
-        x_input = np.hstack((x_input, 1 * np.ones((len(x_raw), 1))))  # bias trick
+        x_input = np.reshape(x_raw, (len(x_raw), 1))
+        # x_input = (x_raw - x_mean) / x_std
+        # x_input = np.reshape(x_input, (len(x_input), 1))
+        # x_input = np.hstack((x_input, 1 * np.ones((len(x_raw), 1))))  # bias trick
     if y_raw is not None:
+        # y_input = (y_raw - y_mean) / y_std
         y_input = np.reshape(y_raw, (len(y_raw), 1))
 
     return x_input, y_input
@@ -143,49 +158,54 @@ def preprocess(x_raw=None, y_raw=None):
 # Postprocessing of the output
 def postprocess(y_raw):
     return np.reshape(y_raw, (1, y_raw.shape[0]))[0]
+    # global y_mean, y_std  # very sloppy implementation, but bare with me
+    # y_output = np.reshape(y_raw, (1, y_raw.shape[0]))[0]
+    # return (y_output * y_std) + y_mean
 
 
-# Optional gradient checking
+# Optional grad-checking
 def grad_check(x_input, y_input):
-    global X, y, Loss, W, XW, h
+    global X, y, W_b, XW_b, Z, W2_b, ZW_b, Loss
     X.set_input(x_input)
     y.set_input(y_input)
-    Loss.reset()
-    Loss.fire()
-    Loss.backfire()
-    oldW = copy.copy(W)
-    for flat_idx in [0, 1]:
-        old, actual_grad = oldW.get_values_from_flat(flat_idx)
-        print('Checking gradient for', W.name, flat_idx, 'parameter.')
+    for param in [W_b, W2_b]:
         Loss.reset()
-        W.set_value_from_flat(old + h, flat_idx)
-        Jplus = Loss.fire()
-        Loss.reset()
-        W.set_value_from_flat(old - h, flat_idx)
-        Jminus = Loss.fire()
-        Loss.reset()
-        numerical_grad = ((Jplus - Jminus) / (2 * h))[0]
-        W.set_value_from_flat(old, flat_idx)
-        # print('Jplus:', Jplus, 'Jminus:', Jminus)
-        print('Actual:', actual_grad)
-        print('Numerical:', numerical_grad)  # TODO: Implement a legit comparison, e.g. relative error.
-        rel_error = abs(actual_grad - numerical_grad) / max(abs(actual_grad), abs(numerical_grad))
-        print('Relative error between the two:', rel_error)
-        print()
+        Loss.fire()
+        Loss.backfire()
+
+        old_param = copy.copy(param)
+        for flat_idx in range(np.prod(param.shape)):
+            old, actual_grad = old_param.get_values_from_flat(flat_idx)
+            print('Checking gradient for', param.name, param.get_idx_from_flat(flat_idx), 'parameter.')
+            Loss.reset()
+            param.set_value_from_flat(old + h, flat_idx)
+            Jplus = Loss.fire()
+            Loss.reset()
+            param.set_value_from_flat(old - h, flat_idx)
+            Jminus = Loss.fire()
+            Loss.reset()
+            numerical_grad = ((Jplus - Jminus) / (2 * h))[0]
+            param.set_value_from_flat(old, flat_idx)
+            # print('Jplus:', Jplus, 'Jminus:', Jminus)
+            print('Actual:', actual_grad)
+            print('Numerical:', numerical_grad)
+            rel_error = abs(actual_grad - numerical_grad) / max(abs(actual_grad), abs(numerical_grad))
+            print('Relative error between the two:', rel_error)
+            print()
 
 
 # One step of training
 def train_step(x_input, y_input):
-    global X, y, Loss, W, XW
+    global X, y, W_b, XW_b, Z, W2_b, ZW_b, Loss
     X.set_input(x_input)  # In real ML problems, we'd iterate over mini-batches and set X's value to each mini-batch's value. 1 epoch = all mini-batches done.
     y.set_input(y_input)
     Loss.reset()
     Loss.fire()
     # print('X', X.value)
     # print('y', y.value)
-    # print('W', W.value)
+    # print('W', W_b.value)
     # print('XW', XW.value)
-    # print('Loss', Loss.value)
+    print('Loss', Loss.value)
     # print()
 
     # print('X', X.shape)
@@ -197,7 +217,8 @@ def train_step(x_input, y_input):
 
     Loss.backfire()
     # print('W', W.get_values_from_flat(1))
-    W.update({'alpha': 0.0000001})
+    for param in [W_b, W2_b]:
+        param.update({'alpha': 0.000000001})
 
 
 # Additional vars (for drawing and such)
@@ -239,7 +260,7 @@ def handle_mouse(event):
 
 def main():
     global prev_mouse_pos, point_radius, n_samples, should_retrain, current_epoch, max_epochs,\
-        X, y, W, XW, Loss, x_train, y_train, x_mean, x_std, y_mean, y_std
+        X, y, W_b, XW_b, Z, W2_b, ZW_b, Loss
 
     # Pre-gameloop stuff
     run = True
@@ -284,8 +305,13 @@ def main():
         # Draw learned curve
         x_test = np.linspace(-width/2, width/2, n_samples)
         x_input, _ = preprocess(x_raw=x_test)
-        y_output = postprocess(x_input @ W.value)
+        X.set_input(x_input)
+        Loss.reset()
+        Loss.fire()
+        # y_output = postprocess(ZW_b.value)
+        y_output = postprocess(ZW_b.value)
         pts = [np.array([x_, y_]) for x_, y_ in zip(x_test, y_output)]
+        # print(pts)
         pygame.draw.lines(screen, colors['red'], False, A_many(pts), width=2)
 
         # Draw training epochs
@@ -295,6 +321,7 @@ def main():
         # Handle keys + mouse
         keys_pressed = pygame.key.get_pressed()
         handle_keys(keys_pressed)
+
 
         # Send the pygame surface over to our shaders for post-processing
         # (1) Send the surface as a uniform called 'tex'

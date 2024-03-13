@@ -97,12 +97,15 @@ class TensorNode:
     def set_value_from_flat(self, new_val, flat_idx):
         assert self.learnable, str(self.name) + ' is not learnable, are you sure you want to be doing this?'
         if flat_set_message: print(self.name, 'node was explicitly set (outside of optimization).')
-        idx = np.unravel_index(flat_idx, self.shape)
+        idx = self.get_idx_from_flat(flat_idx)
         self.value[idx] = new_val
 
     def get_values_from_flat(self, flat_idx):
-        idx = np.unravel_index(flat_idx, self.shape)
+        idx = self.get_idx_from_flat(flat_idx)
         return copy.copy(self.value[idx]), copy.copy(self.gradient[idx])
+
+    def get_idx_from_flat(self, flat_idx):
+        return np.unravel_index(flat_idx, self.shape)
 
     def __call__(self, *args, **kwargs):
         return self.fire()
@@ -298,6 +301,10 @@ class LayerNormNode:
 
         self.name = name
 
+    def set_input(self, tensor_input: np.ndarray):
+        assert isinstance(self.tensor, TensorNode), 'parent is not a Tensor node, not sure what to set input to!'
+        self.tensor.set_input(tensor_input)
+
     def reset(self, hard=False):
         self.__reset_shape__()
         self.has_cached = False  # this will allow self.value to be overwritten automatically
@@ -354,12 +361,14 @@ class RegularizationLossNode:
 
 # Bias trick node (it just adds an extra column of 1s at the end, but the gradient chops off the corresponding column)
 class BiasTrickNode:
-    def __init__(self, tensor, name='bias_trick'):
+    def __init__(self, tensor, bias_val=1.0, name='bias_trick'):
         self.tensor = tensor
         self.parents = [tensor]
         tensor.children.append(self)
         self.children = []  # add from outside
 
+        self.bias_val = bias_val  # ONLY use this if the number of neurons in the layer to which you're adding this is small.
+                                  # otherwise, stick with 1.0 and apply layernorm after this layer!
         self.value, self.gradients, self.has_cached, self.shape = None, None, None, None  # good practice to initialize in constructor
         self.reset()
 
@@ -381,7 +390,7 @@ class BiasTrickNode:
 
     def fire(self):
         # If we haven't already computed this, compute it. Otherwise use cached.
-        if not self.has_cached: self.value = np.hstack( ( self.tensor(), np.ones( (self.tensor.shape[0], 1) ) ) )  # tack on the ones
+        if not self.has_cached: self.value = np.hstack( ( self.tensor(), self.bias_val * np.ones( (self.tensor.shape[0], 1) ) ) )  # tack on the ones
         elif print_fired: print('<used cached> ', end='')
         self.has_cached = True
         if print_fired: print(self.name, 'was fired.')

@@ -75,9 +75,9 @@ def A_many(vals):
 # Points will shifted to fit into the little window used for visualization of the decision boundary at draw time.
 # So here, create the points as if "height" and "width" refer simply to the visualization window's dimensions.
 # TODO: Add a bit of jitter
-dataset = 1  # 0 = radial, 1 = linear, 2 = v-shaped
+dataset = 0  # 0 = radial, 1 = affine, 2 = v-shaped
 x_train, y_train = [], []
-n_examples = 40
+n_examples = 200
 # Radial
 if dataset == 0:
     max_radius = height / 3.
@@ -87,15 +87,16 @@ if dataset == 0:
         theta = np.random.random() * 2.0 * np.pi
         x_train.append(r * np.array([np.cos(theta), np.sin(theta)]))
         y_train.append(0 if r < cutoff else 1)  # 0 = inside class, 1 = outside class
-# Linear
+# Affine
 elif dataset == 1:
-    angle = np.radians(45)  # angle the normal vector of the decision boundary should make with horizontal
+    angle = np.radians(45)
+    offset = np.array([100.0, 100.0])
     sidelen = height * 0.8
     for i in range(n_examples):
-        pt = np.random.uniform(-sidelen/2, +sidelen/2, size=2)
+        pt = np.random.uniform(-sidelen / 2, +sidelen / 2, size=2)
         x_train.append(pt)
         nor = np.array([np.cos(angle), np.sin(angle)])
-        label = int(np.round((np.sign(np.dot(nor, pt)) / 2.0) + 0.5))
+        label = int(np.round((np.sign(np.dot(nor, pt - offset)) / 2.0) + 0.5))
         y_train.append(label)
 # V-shaped
 elif dataset == 2:
@@ -116,17 +117,20 @@ else:
 assert np.all((np.array(y_train) == 0) | (np.array(y_train) == 1)), 'labels must be of the form 0, 1, 2...'
 
 # Build computation graph (TODO: add functionality for many more hidden layers, neurons, and classes)
+# TODO: PASS IN THE BIAS VALUES INTO THE SHADER.
 # Note that because of glsl's visualization limits, we can only have 3 neurons per hidden unit, as that
 # would mean 3 weights + 1 bias = 4 maximum dimension of matrices, which is the max that glsl supports.
+# NOTE: IF YOU CHANGE SOMETHING HERE, MAKE SURE TO CHANGE IT IN THE GLSL FILE TOO!!
 n_hidden = 3  # number of neurons in single (for now) hidden layer.
 n_outputs = 2  # 2 classes
+bias_vals = [500.0, 500.0]
 # note: read "W_b" as "W and b", 'b' for bias vector. and 'XW_b" as 'XW+b", where b is the bias vector included in W.
-X = BiasTrickNode(TensorNode(learnable=False, shape=(len(x_train), 2), name='X_data'))  # (x1, x2) + 1 bias
-X_normed = LayerNormNode(X)
+X = BiasTrickNode(TensorNode(learnable=False, shape=(len(x_train), 2), name='X_data'), bias_val=bias_vals[0])  # (x1, x2) + 1 bias
+X_normed = X#LayerNormNode(X)
 y = TensorNode(learnable=False, shape=(len(y_train), 1), name='y_labels')
 W_b = TensorNode(learnable=True, shape=(3, n_hidden), name='WeightsBias-Layer-1')  # 3 weights per hidden neuron (for x1, x2, and bias)
 XW_b = MultiplicationNode(X_normed, W_b)
-Z = BiasTrickNode(SimpleActivationNode(XW_b, kind='sigmoid'))
+Z = BiasTrickNode(SimpleActivationNode(XW_b, kind='relu'), bias_val=bias_vals[1])
 W2_b = TensorNode(learnable=True, shape=(n_hidden + 1, n_outputs), name='WeightsBias-Layer-2')  # num of hidden neurons + bias
 ZW_b = MultiplicationNode(Z, W2_b)
 Soft = SoftmaxNode(ZW_b)
@@ -141,20 +145,28 @@ accuracy = 0.0
 # (1) For biases, initialize with 0.01, which is recommended
 for h_ in range(n_hidden): W_b.value[W_b.shape[0]-1, h_] = 0.01
 for o_ in range(n_outputs): W2_b.value[W2_b.shape[0]-1, o_] = 0.01
-# (2) For weights, use Glorot initialization (assuming activation function is sigmoid or tanh!)
-assert Z.parents[0].actfn in [sigmoid, tanh], 'Glorot initialization won\'t work for non-symmetric actfns!'
-for param in [W_b, W2_b]:
-    a = np.sqrt(6.0 / (param.shape[0] + param.shape[1]))
-    param.value[:-1, :] = np.random.uniform(-a, a, size=(param.shape[0]-1, param.shape[1]))
-
 # print(W_b.value)
 # print()
+# (2) For weights, use Glorot initialization (assuming activation function is sigmoid or tanh!)
+for param in [W_b, W2_b]:
+    actfn = Z.parents[0].actfn
+    if actfn in [sigmoid, tanh]:
+        a = np.sqrt(6.0 / (param.shape[0] + param.shape[1]))
+        param.value[:-1, :] = np.random.uniform(-a, a, size=(param.shape[0]-1, param.shape[1]))
+    elif actfn in [relu, softplus]:
+        mu = 0.0
+        sigma = np.sqrt(2.0 / param.shape[0])
+        param.value[:-1, :] = np.random.normal(mu, sigma, size=(param.shape[0] - 1, param.shape[1]))
+    else:
+        print('Not sure how to initialize weights...')
+
+# print(W_b.value)
 # print()
 
 # Training parameters
 h = 1e-5  # for gradient checking
 should_retrain = False
-max_epochs = 1000
+max_epochs = 10000
 current_epoch = 0  # we'll increment by 1 before current the first epoch
 
 
@@ -186,15 +198,11 @@ def grad_check(x_input, y_input):
         Loss.reset()
         Loss.fire()
         Loss.backfire()
-        # print(ZW_b.gradients[Z])  # TODO: Maybe it's cuz the weights aren't being initialized properly
-        # print()
-        # print()
-
 
         old_param = copy.copy(param)
-        for flat_idx in [0, 1, 2]:
+        for flat_idx in range(np.prod(param.shape)):
             old, actual_grad = old_param.get_values_from_flat(flat_idx)
-            print('Checking gradient for', param.name, flat_idx, 'parameter.')
+            print('Checking gradient for', param.name, param.get_idx_from_flat(flat_idx), 'parameter.')
             Loss.reset()
             param.set_value_from_flat(old + h, flat_idx)
             Jplus = Loss.fire()
@@ -219,19 +227,6 @@ def train_step(x_input, y_input):
     y.set_input(y_input)
     Loss.reset()
     Loss.fire()
-    # print('X', X.value)
-    # print('y', y.value)
-    # print('W', W.value)
-    # print('XW', XW.value)
-    # print('Loss', Loss.value)
-    # print()
-
-    # print('X', X.shape)
-    # print('y', y.shape)
-    # print('W', W.shape)
-    # print('XW', XW.shape)
-    # print('Loss', Loss.shape)
-    # print()
 
     # Calculate training accuracy
     incorrect = abs(np.argmax(Soft.value, axis=1, keepdims=True) - y_input)
@@ -239,7 +234,7 @@ def train_step(x_input, y_input):
     # Update weights
     Loss.backfire()
     for param in [W_b, W2_b]:
-        param.update({'alpha': 0.001})
+        param.update({'alpha': 0.0000002})
 
 
 # Visualization parameters (for decision boundary visualization window and more)
@@ -299,7 +294,7 @@ def handle_mouse(event):
 
 
 def main():
-    global prev_mouse_pos, point_radius, n_samples, should_retrain, current_epoch, max_epochs, x_train, y_train, Loss, Soft, accuracy, db_sidelen, db_offset
+    global prev_mouse_pos, point_radius, n_samples, should_retrain, current_epoch, max_epochs, x_train, y_train, Loss, Soft, accuracy, db_sidelen, db_offset, bias_vals
 
     # Pre-gameloop stuff
     run = True
@@ -332,11 +327,19 @@ def main():
             train_step(x_input, y_input)
             # break
 
+        # Track weights
+        # print(W_b.value)
+        # print()
+        # break
+
         # Test some points (debugging)
         # X.set_input(np.array([mouse_pos]))
         # Loss.reset()
         # Loss.fire()
         # print(current_epoch, Soft.value)
+
+        # Print epochs, loss, accuracy
+        print(current_epoch, Loss.value, accuracy)
 
         # Essentially more epochs to the training if the data has changed
         if should_retrain:
@@ -355,7 +358,6 @@ def main():
         # Draw training epochs
         # text = font.render('Epoch: '+str(min(current_epoch, max_epochs))+'/'+str(max_epochs), True, colors['red'])
         # screen.blit(text, (width/2 - 120, 40))
-        print(current_epoch, Loss.value, accuracy)
 
         # Handle keys + mouse
         keys_pressed = pygame.key.get_pressed()
@@ -376,6 +378,7 @@ def main():
         # (b) The actual MLP params
         program['W_bT'] = W_b.value.T.flatten('F')
         program['W2_bT'] = W2_b.value.T.flatten('F')
+        program['bias_vals'] = bias_vals
         # (4) Render the result to the screen
         render_object.render(mode=moderngl.TRIANGLE_STRIP)
 
