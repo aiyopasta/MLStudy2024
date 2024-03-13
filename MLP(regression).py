@@ -218,7 +218,7 @@ def train_step(x_input, y_input):
     Loss.backfire()
     # print('W', W.get_values_from_flat(1))
     for param in [W_b, W2_b]:
-        param.update({'alpha': 0.000000001})
+        param.update(params={'alpha': 0.1}, method='adagrad')
 
 
 # Additional vars (for drawing and such)

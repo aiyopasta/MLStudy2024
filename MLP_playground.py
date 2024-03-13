@@ -77,7 +77,7 @@ def A_many(vals):
 # TODO: Add a bit of jitter
 dataset = 0  # 0 = radial, 1 = affine, 2 = v-shaped
 x_train, y_train = [], []
-n_examples = 200
+n_examples = 150
 # Radial
 if dataset == 0:
     max_radius = height / 3.
@@ -222,7 +222,7 @@ def grad_check(x_input, y_input):
 
 # One step of training
 def train_step(x_input, y_input):
-    global X, X_normed, y, W_b, XW_b, Z, W2_b, ZW_b, Soft, Loss, accuracy
+    global X, X_normed, y, W_b, XW_b, Z, W2_b, ZW_b, Soft, Loss, accuracy, current_epoch
     X.set_input(x_input)  # In real ML problems, we'd iterate over mini-batches and set X's value to each mini-batch's value. 1 epoch = all mini-batches done.
     y.set_input(y_input)
     Loss.reset()
@@ -234,7 +234,11 @@ def train_step(x_input, y_input):
     # Update weights
     Loss.backfire()
     for param in [W_b, W2_b]:
-        param.update({'alpha': 0.0000002})
+        # param.update(params={'alpha': 0.0000001}, method='GD')
+        param.update(params={'alpha': 0.1}, method='adagrad')
+
+    # Print epochs, loss, accuracy
+    # print(current_epoch, Loss.value, accuracy)
 
 
 # Visualization parameters (for decision boundary visualization window and more)
@@ -333,13 +337,10 @@ def main():
         # break
 
         # Test some points (debugging)
-        # X.set_input(np.array([mouse_pos]))
-        # Loss.reset()
-        # Loss.fire()
-        # print(current_epoch, Soft.value)
-
-        # Print epochs, loss, accuracy
-        print(current_epoch, Loss.value, accuracy)
+        X.set_input(np.array([mouse_pos]))
+        Loss.reset()
+        Loss.fire()
+        print(current_epoch, Soft.value)
 
         # Essentially more epochs to the training if the data has changed
         if should_retrain:

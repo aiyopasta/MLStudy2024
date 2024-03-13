@@ -50,12 +50,18 @@ float softplus(float tau) {
 }
 
 float soft(int i, vec2 arr) {
-    return exp(arr[i]) / (exp(arr.x) + exp(arr.y));
+    // Normalize by max to prevent numerical issues which were arising
+    float max_val = max(arr.x, arr.y);
+    arr -= vec2(max_val, max_val);
+    float expX = exp(arr.x);
+    float expY = exp(arr.y);
+    return (i == 0) ? (expX / (expX + expY)) : (expY / (expX + expY));
 }
 
 vec2 softmax(vec2 arr) {
     return vec2(soft(0, arr), soft(1, arr));
 }
+
 
 
 // Evaluate MLP for current pixel (this outputs a soft value between 0 and 1).

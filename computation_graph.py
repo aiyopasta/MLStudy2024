@@ -59,6 +59,9 @@ class TensorNode:
         self.gradient = np.zeros(shape)
         self.learnable = learnable
 
+        # Additional params for certain optimization methids
+        self.cache = 0.0  # for adagrad
+
         self.name = name
 
     def set_input(self, tensor:np.ndarray):
@@ -93,6 +96,11 @@ class TensorNode:
             assert 'alpha' in params
             alpha = params['alpha']
             self.set_input(self.value - (alpha * self.gradient))
+        elif method == 'adagrad':
+            assert 'alpha' in params
+            alpha = params['alpha']
+            self.cache += np.sum(self.gradient * self.gradient)
+            self.set_input(self.value - ((alpha * self.gradient) / (np.sqrt(self.cache) + 1e-7)))
 
     def set_value_from_flat(self, new_val, flat_idx):
         assert self.learnable, str(self.name) + ' is not learnable, are you sure you want to be doing this?'
@@ -582,9 +590,12 @@ def relu_prime(tau):
 
 
 def softmax(Tau: np.array):
-    assert len(Tau.shape) == 2, 'input must be a matrix!'
-    exp = np.exp(Tau)
-    return exp / exp.sum(axis=1, keepdims=True)  # the sum results in a column vector, and '/' divides each row in exp by correponding element
+    assert len(Tau.shape) == 2, 'Input must be a matrix!'
+    maxVal = np.max(Tau, axis=1, keepdims=True)  # Find the max for each row
+    Tau_adjusted = Tau - maxVal  # Subtract max for numerical stability
+    exp = np.exp(Tau_adjusted)
+    return exp / np.sum(exp, axis=1, keepdims=True)
+
 
 
 # Single value softmax

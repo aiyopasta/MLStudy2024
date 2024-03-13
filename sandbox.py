@@ -5,7 +5,7 @@ T = np.array([[-0.07426286,  0.12243876],
               [-0.0481759 , -0.0481759 ],
               [ 0.12243876, -0.07426286]])
 
-print(T.flatten('F'))
+print(T * T)
 
 # D = np.sum(T, axis=1, keepdims=True) * np.ones_like(T)
 # print(D)
