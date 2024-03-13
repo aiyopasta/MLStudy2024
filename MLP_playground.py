@@ -6,6 +6,7 @@ import moderngl
 import numpy as np
 import pygame
 from computation_graph import *
+np.random.seed(42)
 
 pygame.init()
 
@@ -74,9 +75,10 @@ def A_many(vals):
 # Points will shifted to fit into the little window used for visualization of the decision boundary at draw time.
 # So here, create the points as if "height" and "width" refer simply to the visualization window's dimensions.
 # TODO: Add a bit of jitter
-dataset = 1  # 0 = radial, 1 = linear
+dataset = 1  # 0 = radial, 1 = linear, 2 = v-shaped
 x_train, y_train = [], []
-n_examples = 100
+n_examples = 40
+# Radial
 if dataset == 0:
     max_radius = height / 3.
     cutoff = max_radius * 0.6
@@ -85,8 +87,9 @@ if dataset == 0:
         theta = np.random.random() * 2.0 * np.pi
         x_train.append(r * np.array([np.cos(theta), np.sin(theta)]))
         y_train.append(0 if r < cutoff else 1)  # 0 = inside class, 1 = outside class
+# Linear
 elif dataset == 1:
-    angle = np.radians(200)  # angle the normal vector of the decision boundary should make with horizontal
+    angle = np.radians(45)  # angle the normal vector of the decision boundary should make with horizontal
     sidelen = height * 0.8
     for i in range(n_examples):
         pt = np.random.uniform(-sidelen/2, +sidelen/2, size=2)
@@ -94,8 +97,18 @@ elif dataset == 1:
         nor = np.array([np.cos(angle), np.sin(angle)])
         label = int(np.round((np.sign(np.dot(nor, pt)) / 2.0) + 0.5))
         y_train.append(label)
-
-
+# V-shaped
+elif dataset == 2:
+    angle = np.radians(30)  # angle the normal vector of the decision boundary should make with horizontal
+    sidelen = height * 0.8
+    for i in range(n_examples):
+        pt = np.random.uniform(-sidelen/2, +sidelen/2, size=2)
+        x_train.append(pt)
+        nor = np.array([np.cos(angle), np.sin(angle)])
+        label1 = int(np.round((np.sign(np.dot(nor, pt)) / 2.0) + 0.5))
+        nor2 = np.array([-np.sin(angle), np.cos(angle)])
+        label2 = int(np.round((np.sign(np.dot(nor2, pt)) / 2.0) + 0.5))
+        y_train.append(label1 & label2)
 else:
     print('huh?')
 
@@ -249,7 +262,7 @@ def DB_inv(val):
 
 # Additional vars (for pygame drawing and such)
 drag_idx = -1  # index of point being moved. -1 if none
-point_radius = 5
+point_radius = 10
 n_samples = 100  # number of samples for drawing the learned curve
 colors = {
     'white': np.array([255., 255., 255.]),
@@ -286,7 +299,7 @@ def handle_mouse(event):
 
 
 def main():
-    global prev_mouse_pos, point_radius, n_samples, should_retrain, current_epoch, max_epochs, x_train, y_train, Loss, accuracy, db_sidelen, db_offset
+    global prev_mouse_pos, point_radius, n_samples, should_retrain, current_epoch, max_epochs, x_train, y_train, Loss, Soft, accuracy, db_sidelen, db_offset
 
     # Pre-gameloop stuff
     run = True
@@ -319,6 +332,12 @@ def main():
             train_step(x_input, y_input)
             # break
 
+        # Test some points (debugging)
+        # X.set_input(np.array([mouse_pos]))
+        # Loss.reset()
+        # Loss.fire()
+        # print(current_epoch, Soft.value)
+
         # Essentially more epochs to the training if the data has changed
         if should_retrain:
             current_epoch = 0
@@ -331,6 +350,7 @@ def main():
         for x_, y_ in zip(x_train, y_train):
             col = colors['red'] if y_ == 0 else colors['blue']
             pygame.draw.circle(screen, col, A(DB(x_)), radius=point_radius, width=0)
+            pygame.draw.circle(screen, (0, 0, 0), A(DB(x_)), radius=point_radius, width=2)
 
         # Draw training epochs
         # text = font.render('Epoch: '+str(min(current_epoch, max_epochs))+'/'+str(max_epochs), True, colors['red'])
@@ -351,11 +371,11 @@ def main():
         # (3) Send any more uniform variables here...
         # (a) For drawing / display
         program['window_dims'] = np.array([width, height])
-        program['db_offset'] = db_offset
+        program['db_offset'] = db_offset.flatten()
         program['db_sidelen'] = db_sidelen
         # (b) The actual MLP params
-        program['W_b'] = W_b.value.flatten()
-        program['W2_b'] = W2_b.value.flatten()
+        program['W_bT'] = W_b.value.T.flatten('F')
+        program['W2_bT'] = W2_b.value.T.flatten('F')
         # (4) Render the result to the screen
         render_object.render(mode=moderngl.TRIANGLE_STRIP)
 
