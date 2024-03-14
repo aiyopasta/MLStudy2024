@@ -288,13 +288,13 @@ class LayerNormNode:
         assert len(tensor.shape) == 2, 'layernorm hasn\'t been implemented for >2 tensors!'
         self.parents = [tensor]
         if gamma is not None:
-            assert gamma.shape[0] == tensor.shape[0], 'gamma\'s shape does not match!'
+            assert gamma.shape[0] == tensor.shape[1], 'gamma\'s shape does not match!'
             assert gamma.shape[1] == 1, 'gamma must have 1 column!'
             self.gamma = gamma
             self.parents.append(gamma)
             gamma.children.append(self)
         if beta is not None:
-            assert beta.shape[0] == tensor.shape[0], 'gamma\'s shape does not match!'
+            assert beta.shape[0] == tensor.shape[1], 'gamma\'s shape does not match!'
             assert beta.shape[1] == 1, 'beta must have 1 column!'
             self.beta = beta
             self.parents.append(beta)
@@ -330,8 +330,8 @@ class LayerNormNode:
         if not self.has_cached:
             mu, std = np.mean(self.tensor(), axis=1).reshape(-1, 1), np.std(self.tensor(), axis=1, ddof=1).reshape(-1, 1) + 1e-10
             self.value = (self.tensor() - mu) / std
-            if hasattr(self, 'gamma'): self.value *= self.gamma()
-            if hasattr(self, 'beta'): self.value += self.beta()
+            if hasattr(self, 'gamma'): self.value *= self.gamma().T
+            if hasattr(self, 'beta'): self.value += self.beta().T
         elif print_fired: print('<used cached> ', end='')
         self.has_cached = True
         if print_fired: print(self.name, 'was fired.')
@@ -345,12 +345,13 @@ class LayerNormNode:
         S = np.sum(child_gradient, axis=1, keepdims=True) * np.ones_like(child_gradient)
         mu, std = np.mean(self.tensor(), axis=1, keepdims=True), np.std(self.tensor(), axis=1, ddof=1, keepdims=True) + 1e-10
         XminusMu = self.tensor() - mu
+        XminusMuoverSigma = XminusMu / std
         XminusMuoverSigmaCubed = XminusMu / np.power(std, 3.0)
         n = self.tensor.shape[1]
         colvector = np.sum(child_gradient * XminusMuoverSigmaCubed, axis=1, keepdims=True)
-        self.gradients[self.tensor] += ((child_gradient / std) - ((1/n) * S / std) - (XminusMu * colvector / (n-1)))# * self.gamma().T
-        # if hasattr(self, 'gamma'): self.gradients[self.std] +=  * child_gradient  # TODO
-        # if hasattr(self, 'beta'): self.gradients[self.std] += *child_gradient  # TODO
+        self.gradients[self.tensor] += ((child_gradient / std) - ((1/n) * S / std) - (XminusMu * colvector / (n-1))) * self.gamma().T
+        if hasattr(self, 'gamma'): self.gradients[self.gamma] += np.sum(XminusMuoverSigma * child_gradient, axis=0, keepdims=True).T
+        if hasattr(self, 'beta'): self.gradients[self.beta] += np.sum(child_gradient, axis=0, keepdims=True).T  # gradient simply forks
         for parent in self.parents: parent.backfire(self)
 
     def __call__(self, *args, **kwargs):

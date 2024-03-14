@@ -10,6 +10,9 @@
 #
 #  (3) *OHH* we need to have gamma and beta for layernorm to work even in the toy examples I think! Let me try
 #      this... hopefully it fixes the need of the "bias_value" parameters.
+#
+#  (4) Hmm... it still doesn't work. Need to test the most basic case of linear regression with gamma/beta layernorm.
+#      If it still looks like a step-function, think about what's going wrong. TODO
 
 import moderngl
 import numpy as np
@@ -81,7 +84,7 @@ def A_many(vals):
 # THE ACTUAL CODE STARTS HERE —————————————————————————————————————————————————————————————————————————————————
 # Training data (raw, not normalized)
 x_train = list(np.linspace(-width/2, width/2, 100))
-y_train = [-0.5 * x - 200 + np.random.randint(-100, 100) for x in x_train]
+y_train = [-0.5 * x - 200 + np.random.randint(-10, 10) for x in x_train]
 
 # Data normalization parameters (need to use the same ones at test time)
 x_mean, x_std = np.mean(x_train), np.std(x_train)
@@ -98,28 +101,32 @@ y_mean, y_std = np.mean(y_train), np.std(y_train)
 # node_list = [X, X_normed, y, W_b, XW_b, Loss]
 
 # MLP
-n_hidden = 3  # number of neurons in single (for now) hidden layer.
+n_hidden = 1  # number of neurons in single (for now) hidden layer.
 n_outputs = 1  # 1 predicted y-value
-X = BiasTrickNode(TensorNode(learnable=False, shape=(len(x_train), 1), name='X_data'), bias_val=100.0)
+X = BiasTrickNode(TensorNode(learnable=False, shape=(len(x_train), 1), name='X_data'), bias_val=1.0)
 W_b = TensorNode(learnable=True, shape=(2, n_hidden), name='Weights')  # 1 weight + 1 bias
 y = TensorNode(learnable=False, shape=(len(y_train), 1), name='y_labels')
 XW_b = MultiplicationNode(X, W_b)
-Z = BiasTrickNode(SimpleActivationNode(XW_b, kind='relu'), bias_val=500.0)
+Z = BiasTrickNode(SimpleActivationNode(XW_b, kind='relu'), bias_val=1.0)
+gamma = TensorNode(learnable=True, shape=(n_hidden+1, 1), name='gamma')  # 4 inputs (= 3 hidden + 1 bias)
+beta = TensorNode(learnable=True, shape=(n_hidden+1, 1), name='beta')    # 4 inputs (= 3 hidden + 1 bias)
+Z_normed = LayerNormNode(Z, gamma=gamma, beta=beta)
 W2_b = TensorNode(learnable=True, shape=(n_hidden+1, 1), name='Weights')  # 1 weight + 1 bias
-ZW_b = MultiplicationNode(Z, W2_b)
+ZW_b = MultiplicationNode(Z_normed, W2_b)
 Loss = SquaredLossNode(mu=ZW_b, y=y)
 # List of all nodes, for convenience
-node_list = [X, W_b, y, XW_b, Z, W2_b, ZW_b, Loss]
+node_list = [X, gamma, beta, W_b, y, XW_b, Z, Z_normed, W2_b, ZW_b, Loss]
 
 
 
-# Initialize weights & biases for training.
+# Initialize params for training.
 # (1) For biases, initialize with 0.01, which is recommended
-for h_ in range(1): W_b.value[W_b.shape[0]-1, h_] = 0.01
-for o_ in range(1): W2_b.value[W2_b.shape[0]-1, o_] = 0.01
-# print(W_b.value)
-# print()
-# (2) For weights, use Glorot initialization (assuming activation function is sigmoid or tanh!)
+for h_ in range(n_hidden): W_b.value[W_b.shape[0]-1, h_] = 0.01
+for o_ in range(n_outputs): W2_b.value[W2_b.shape[0]-1, o_] = 0.01
+# (2) Set gamma equal to ones and beta equal to 0s
+gamma.set_input(np.array([[1.0, 1.0]]).T)
+beta.set_input(np.zeros(beta.shape))
+# (3) For linear weights, use Glorot initialization (assuming activation function is sigmoid or tanh!)
 for param in [W_b, W2_b]:
     actfn = Z.parents[0].actfn
     if actfn in [sigmoid, tanh]:
@@ -167,10 +174,10 @@ def postprocess(y_raw):
 
 # Optional grad-checking
 def grad_check(x_input, y_input):
-    global X, y, W_b, XW_b, Z, W2_b, ZW_b, Loss
+    global X, gamma, beta, W_b, y, XW_b, Z, Z_normed, W2_b, ZW_b, Loss
     X.set_input(x_input)
     y.set_input(y_input)
-    for param in [W_b, W2_b]:
+    for param in [W_b, W2_b, gamma, beta]:
         Loss.reset()
         Loss.fire()
         Loss.backfire()
@@ -198,29 +205,17 @@ def grad_check(x_input, y_input):
 
 # One step of training
 def train_step(x_input, y_input):
-    global X, y, W_b, XW_b, Z, W2_b, ZW_b, Loss
+    global X, gamma, beta, W_b, y, XW_b, Z, Z_normed, W2_b, ZW_b, Loss
     X.set_input(x_input)  # In real ML problems, we'd iterate over mini-batches and set X's value to each mini-batch's value. 1 epoch = all mini-batches done.
     y.set_input(y_input)
     Loss.reset()
     Loss.fire()
-    # print('X', X.value)
-    # print('y', y.value)
-    # print('W', W_b.value)
-    # print('XW', XW.value)
-    print('Loss', Loss.value)
-    # print()
-
-    # print('X', X.shape)
-    # print('y', y.shape)
-    # print('W', W.shape)
-    # print('XW', XW.shape)
-    # print('Loss', Loss.shape)
-    # print()
-
     Loss.backfire()
     # print('W', W.get_values_from_flat(1))
-    for param in [W_b, W2_b]:
+    for param in [W_b, W2_b, gamma, beta]:
         param.update(params={'alpha': 0.1}, method='adagrad')
+
+    print(Z_normed.value, Z.value)
 
 
 # Additional vars (for drawing and such)
@@ -262,7 +257,7 @@ def handle_mouse(event):
 
 def main():
     global prev_mouse_pos, point_radius, n_samples, should_retrain, current_epoch, max_epochs,\
-        X, y, W_b, XW_b, Z, W2_b, ZW_b, Loss
+        X, gamma, beta, W_b, y, XW_b, Z, Z_normed, W2_b, ZW_b, Loss
 
     # Pre-gameloop stuff
     run = True

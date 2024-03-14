@@ -119,37 +119,39 @@ else:
 assert np.all((np.array(y_train) == 0) | (np.array(y_train) == 1)), 'labels must be of the form 0, 1, 2...'
 
 # Build computation graph (TODO: add functionality for many more hidden layers, neurons, and classes)
-# TODO: PASS IN THE BIAS VALUES INTO THE SHADER.
 # Note that because of glsl's visualization limits, we can only have 3 neurons per hidden unit, as that
 # would mean 3 weights + 1 bias = 4 maximum dimension of matrices, which is the max that glsl supports.
 # NOTE: IF YOU CHANGE SOMETHING HERE, MAKE SURE TO CHANGE IT IN THE GLSL FILE TOO!!
 n_hidden = 3  # number of neurons in single (for now) hidden layer.
 n_outputs = 2  # 2 classes
-bias_vals = [500.0, 500.0]
+bias_vals = [500.0, 500.0]  # used to be 500.0, 500.0
 # note: read "W_b" as "W and b", 'b' for bias vector. and 'XW_b" as 'XW+b", where b is the bias vector included in W.
 X = BiasTrickNode(TensorNode(learnable=False, shape=(len(x_train), 2), name='X_data'), bias_val=bias_vals[0])  # (x1, x2) + 1 bias
-X_normed = X#LayerNormNode(X)
+# gamma = TensorNode(learnable=True, shape=(3, 1), name='gamma')  # 3 inputs (= 2 + 1 bias)
+# beta = TensorNode(learnable=True, shape=(3, 1), name='beta')    # 3 inputs (= 2 + 1 bias)
+# X_normed = LayerNormNode(X, gamma=gamma, beta=beta)
 y = TensorNode(learnable=False, shape=(len(y_train), 1), name='y_labels')
 W_b = TensorNode(learnable=True, shape=(3, n_hidden), name='WeightsBias-Layer-1')  # 3 weights per hidden neuron (for x1, x2, and bias)
-XW_b = MultiplicationNode(X_normed, W_b)
+XW_b = MultiplicationNode(X, W_b)
 Z = BiasTrickNode(SimpleActivationNode(XW_b, kind='relu'), bias_val=bias_vals[1])
 W2_b = TensorNode(learnable=True, shape=(n_hidden + 1, n_outputs), name='WeightsBias-Layer-2')  # num of hidden neurons + bias
 ZW_b = MultiplicationNode(Z, W2_b)
 Soft = SoftmaxNode(ZW_b)
 Loss = CrossEntropyLossNode(Soft, y)
 # List of all nodes, for convenience
-node_list = [X, X_normed, y, W_b, XW_b, Z, W2_b, ZW_b, Soft, Loss]
+node_list = [X, y, W_b, XW_b, Z, W2_b, ZW_b, Soft, Loss]
 
 # Training accuracy (percentage correctly classified)
 accuracy = 0.0
 
-# Initialize weights & biases for training. TODO: Initialize weights properly (don't set W=0)
+# Initialize params for training.
 # (1) For biases, initialize with 0.01, which is recommended
 for h_ in range(n_hidden): W_b.value[W_b.shape[0]-1, h_] = 0.01
 for o_ in range(n_outputs): W2_b.value[W2_b.shape[0]-1, o_] = 0.01
-# print(W_b.value)
-# print()
-# (2) For weights, use Glorot initialization (assuming activation function is sigmoid or tanh!)
+# (2) Set gamma equal to ones and beta equal to 0s
+# gamma.set_input(np.ones(gamma.shape))
+# beta.set_input(np.zeros(beta.shape))
+# (3) For linear weights, use Glorot initialization (assuming activation function is sigmoid or tanh!)
 for param in [W_b, W2_b]:
     actfn = Z.parents[0].actfn
     if actfn in [sigmoid, tanh]:
@@ -193,10 +195,10 @@ def postprocess(y_raw):
 
 # Optional gradient checking
 def grad_check(x_input, y_input):
-    global X, X_normed, y, W_b, XW_b, Z, W2_b, ZW_b, Soft, Loss, h
+    global X, y, W_b, XW_b, Z, W2_b, ZW_b, Soft, Loss
     X.set_input(x_input)
     y.set_input(y_input)
-    for param in [W_b, W2_b]:
+    for param in [W_b, W2_b, gamma, beta]:
         Loss.reset()
         Loss.fire()
         Loss.backfire()
@@ -224,7 +226,7 @@ def grad_check(x_input, y_input):
 
 # One step of training
 def train_step(x_input, y_input):
-    global X, X_normed, y, W_b, XW_b, Z, W2_b, ZW_b, Soft, Loss, accuracy, current_epoch
+    global X, y, W_b, XW_b, Z, W2_b, ZW_b, Soft, Loss, accuracy, current_epoch
     X.set_input(x_input)  # In real ML problems, we'd iterate over mini-batches and set X's value to each mini-batch's value. 1 epoch = all mini-batches done.
     y.set_input(y_input)
     Loss.reset()
@@ -338,11 +340,11 @@ def main():
         # print()
         # break
 
-        # Test some points (debugging)
-        X.set_input(np.array([mouse_pos]))
-        Loss.reset()
-        Loss.fire()
-        print(current_epoch, Soft.value)
+        # Test current mouse point (debugging)
+        # X.set_input(np.array([mouse_pos]))
+        # Loss.reset()
+        # Loss.fire()
+        # print(current_epoch, Soft.value)
 
         # Essentially more epochs to the training if the data has changed
         if should_retrain:
