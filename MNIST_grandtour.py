@@ -19,6 +19,10 @@
 #                 input digit (which I draw to the screen) and then "dream up" a "tree"-like thing
 #                 from it that "looks like" a bunch of fours and nines.
 #
+#
+#   NOTE: Sometimes, when you run it, the screen goes completely BONKERS because it's just so many pygame surfaces
+#         you're blitting at once. Just rerun it and it'll work.
+#
 import numpy as np
 
 from computation_graph import *
@@ -51,9 +55,9 @@ def A_many(vals):
 # THE ACTUAL CODE STARTS HERE —————————————————————————————————————————————————————————————————————————————————
 # Load training data (raw, not normalized nor reshaped)
 x_train, y_train = [], []
-n_examples = 100
+n_examples = 500
 digits = []  # fill in if there are a particular subset of digits to exclusively train on
-file = open('digits.txt', 'r')  # File structure. For each new line: digit1, pixel1, pixel2, ..., pixel784
+file = open('digits.txt', 'r')  # File structure. For each new line: digit1, pixel1, pixel2, ..., pixel784. Contains roughly 6,000 examples per class.
 for i in range(n_examples):
     line = np.array(file.readline().rstrip().rsplit(',')).astype(float)
     if len(digits)>0 and int(line[0]) not in digits:
@@ -112,7 +116,7 @@ for param in params_list:
 
 # Training parameters
 h = 1e-5  # for gradient checking
-max_epochs = 1000
+max_epochs = 2000
 current_epoch = 0  # we'll increment by 1 before current the first epoch
 
 
@@ -180,7 +184,35 @@ def idx2surf(idx: int):
     return surf
 
 
-# Additional vars (for drawing and such)
+# Grand tour visualization parameters
+handles = []
+n_viznumbers = 200  # the number of numbers to visualize in the Grand Tour visualization
+assert n_viznumbers < n_examples, 'ur too ambitious, brotha'
+n_classes = 10
+for i in range(n_classes):
+    # By default, arrange them in a circle
+    rad = 300.0
+    angle = float(i) / float(n_classes) * (2.0 * np.pi)
+    handles.append(rad * np.array([np.cos(angle), np.sin(angle)]))
+handles = np.array(handles)
+
+drag_idx = -1  # index of point being moved. -1 if none
+point_radius = 20
+
+
+# Mouse handling
+def handle_mouse(event):
+    global handles, point_radius, drag_idx
+    # Either add a new point or select existing one for dragging
+    if drag_idx == -1:
+        pos = A_inv(pygame.mouse.get_pos())
+        is_selecting = [np.linalg.norm(pos - handle) < point_radius for handle in handles]
+        if np.any(is_selecting): drag_idx = is_selecting.index(True)
+    # Stop tracking the dragging point
+    else: drag_idx = -1
+
+
+# Additional vars (for aesthetics and such)
 colors = {
     'white': np.array([255., 255., 255.]),
     'black': np.array([0., 0., 0.]),
@@ -198,10 +230,15 @@ def handle_keys(keys_pressed):
 
 
 def main():
-    global colors, x_train, y_train, current_epoch, max_epochs
+    global colors, x_train, y_train, current_epoch, max_epochs, point_radius, handles, n_viznumbers
 
     # Pre-gameloop stuff
     run = True
+    font = pygame.font.Font('/Users/adityaabhyankar/Library/Fonts/cmunrm.ttf', 30)
+
+    # Sample the actual numbers to display in the grand tour
+    # TODO: make the selections OUT of the training set (i.e. show novel ones it hasn't seen yet)
+    idxs = np.random.choice(n_examples, n_viznumbers, replace=False)
 
     # Game loop
     count = 0
@@ -217,9 +254,28 @@ def main():
             current_epoch += 1
             train_step(x_train, y_train)
 
+        # Draw the handles
+        for i_, handle in enumerate(handles):
+            col = colors['red']
+            pygame.draw.line(window, col, A([0,0]), A(handle), width=2)
+            pygame.draw.circle(window, col, A(handle), radius=point_radius, width=0)
+            pygame.draw.circle(window, (0, 0, 0), A(handle), radius=point_radius, width=2)
+            text = font.render(str(i_), True, (0,0,0))
+            window.blit(text, A(handle+np.array([-7., 18.])))
 
-        # Image display test
-        window.blit(idx2surf(4), pygame.mouse.get_pos())
+        # Draw number samples
+        for idx in idxs:
+            X.set_input(np.array([x_train[idx]]))
+            y.set_input(np.array([y_train[idx]]))
+            Loss.reset()
+            Loss.fire()
+            pos = handles.T @ np.reshape(Soft.value, (10, 1)).T[0]
+            window.blit(idx2surf(idx), A(pos))
+
+        # Move point being dragged to mouse location
+        mouse_pos = A_inv(pygame.mouse.get_pos())
+        if drag_idx != -1:
+            handles[drag_idx] = np.array(mouse_pos)
 
         # Handle keys
         keys_pressed = pygame.key.get_pressed()
@@ -232,6 +288,8 @@ def main():
             if event.type == pygame.QUIT:
                 run = False
                 pygame.quit()
+            if event.type == pygame.MOUSEBUTTONUP:
+                handle_mouse(event)
 
 
 if __name__ == '__main__':

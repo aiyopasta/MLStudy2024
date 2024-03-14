@@ -217,7 +217,7 @@ class AdditionNode:
 # For homoskedastic regression, where we simply output a mu:   1/2m * |mu-y|^2. Calculate fixed variance as mean((mu-y)^2).
 # For heteroskedastic regression, where we output the std: <TODO: fill in>
 class SquaredLossNode:
-    def __init__(self, mu, y, std=None, name='squared_loss'):
+    def __init__(self, mu, y, std=None, divide_by_m=False, name='squared_loss'):
         self.parents = [mu, y]
         assert mu.shape == y.shape, 'mu & y shapes don\'t match!'
         if std is not None:
@@ -229,6 +229,7 @@ class SquaredLossNode:
         mu.children.append(self)
         y.children.append(self)
         self.children = []  # add from outside. loss node can have children, like addition nodes, for adding losses
+        self.divide_m = divide_by_m
 
         self.value, self.gradients, self.has_cached, self.shape = None, None, None, None  # good practice to initialize in constructor
         self.reset()
@@ -249,7 +250,8 @@ class SquaredLossNode:
     def fire(self):
         # If we haven't already computed this, compute it. Otherwise use cached.
         sigma = np.ones_like(self.mu.fire()) * (self.std.fire() if hasattr(self, 'std') else 1)
-        if not self.has_cached: self.value = (0.5 * (np.linalg.norm((self.y.fire() - self.mu.fire()) / sigma) ** 2) + sum(np.log(sigma)))  # will reduce to MSE if sigma is just vector of ones
+        factor = 0.5 / (1.0 if not self.divide_m else self.mu.shape[0])
+        if not self.has_cached: self.value = (factor * (np.linalg.norm((self.y.fire() - self.mu.fire()) / sigma) ** 2) + sum(np.log(sigma)))  # will reduce to MSE if sigma is just vector of ones
         elif print_fired: print('<used cached> ', end='')
         self.has_cached = True
         if print_fired: print(self.name, 'was fired.')
@@ -260,8 +262,8 @@ class SquaredLossNode:
         assert hasattr(from_child, 'gradients') or from_child is None
         child_gradient = from_child.gradient[self] if from_child is not None else 1.  # note that it will be a real number!
         sigma = np.ones_like(self.mu()) * (self.std if hasattr(self, 'std') else 1)
-        self.gradients[self.mu] += ((self.mu() - self.y()) / (sigma ** 2)) * child_gradient
-        if hasattr(self, 'std'): self.gradients[self.std] += ((- ((self.y() - self.mu()) ** 2) / (self.std() ** 3)) + (1. / self.std())) * child_gradient
+        self.gradients[self.mu] += ((self.mu() - self.y()) / (sigma ** 2)) * child_gradient / self.mu.shape[0]
+        if hasattr(self, 'std'): self.gradients[self.std] += ((- ((self.y() - self.mu()) ** 2) / (self.std() ** 3)) + (1. / self.std())) * child_gradient  # TODO: don't know if divide_m=True would impact anything here
         for parent in self.parents: parent.backfire(self)
         # Dumb note about what highschool me was confused about LOL
         # (yi - ui)^2 = yi^2 - 2yiui + ui^2  --->  2ui - 2yi = 2(ui - yi)
