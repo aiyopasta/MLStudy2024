@@ -1,6 +1,7 @@
 "computation_graph.py" contains, well, the computation graph structure. I should've really made a parent class "Node" 😂
 
 Noteable implementations:
+
 (1) 2D Decision Boundary Visualization: See MLP_playground.py & vert_db.glsl + frag_db.glsl. If you change the network architecture in the .py file, do it in the fragment shader too!
 
 
